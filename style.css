@@ -429,3 +429,113 @@ body.pt-out #pageTransition{
   .section-heading > .muted{ text-align:left; max-width:100%; }
   .gallery{ grid-template-columns:1fr; }
 }
+
+/* =========================
+   Accounts + leaderboard
+========================= */
+.account-status{
+  margin:0 0 8px;
+  color:var(--blue-dark);
+  font-size:13px;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+
+.auth-panel,
+.leaderboard-section{
+  margin:18px 0 30px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:rgba(255,255,255,.88);
+  box-shadow:var(--shadow-soft);
+  padding:22px;
+}
+
+.auth-panel{
+  display:grid;
+  grid-template-columns:minmax(0, .9fr) minmax(280px, 1.1fr);
+  gap:24px;
+  align-items:start;
+}
+
+.auth-form{
+  display:grid;
+  gap:14px;
+}
+
+.auth-form label span{
+  display:block;
+  font-weight:900;
+  margin-bottom:6px;
+}
+
+.auth-form .input{
+  max-width:none;
+  margin-top:0;
+}
+
+.leaderboard{
+  margin:0;
+  padding:0;
+  list-style:none;
+  display:grid;
+  gap:10px;
+  counter-reset:rank;
+}
+
+.leaderboard-row,
+.leaderboard-empty{
+  border:1px solid var(--line);
+  border-radius:18px;
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(248,251,255,.92));
+  padding:14px 16px;
+}
+
+.leaderboard-row{
+  counter-increment:rank;
+  display:flex;
+  justify-content:space-between;
+  gap:18px;
+  align-items:center;
+}
+
+.leaderboard-row::before{
+  content:counter(rank);
+  display:inline-grid;
+  place-items:center;
+  flex:0 0 auto;
+  width:32px;
+  height:32px;
+  border-radius:999px;
+  color:#fff;
+  background:linear-gradient(180deg, var(--blue), var(--blue-dark));
+  font-weight:900;
+  box-shadow:0 10px 18px rgba(37,99,235,.20);
+}
+
+.leaderboard-name{
+  flex:1 1 auto;
+  min-width:0;
+  font-weight:900;
+  overflow-wrap:anywhere;
+}
+
+.leaderboard-score{
+  flex:0 0 auto;
+  color:var(--teal);
+  font-weight:900;
+}
+
+.leaderboard-empty{
+  color:var(--muted);
+  font-weight:800;
+}
+
+[hidden]{ display:none !important; }
+
+@media (max-width:760px){
+  .auth-panel{ grid-template-columns:1fr; }
+  .leaderboard-row{ align-items:flex-start; }
+  .leaderboard-score{ white-space:nowrap; }
+}
