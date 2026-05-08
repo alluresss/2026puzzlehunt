@@ -17,7 +17,6 @@ const PUZZLES = [
 
 const DATABASE_KEY = "puzzle_hunt_database_v1";
 const SESSION_KEY = "puzzle_hunt_current_user_v1";
-const LEGACY_PROGRESS_KEY = "puzzle_hunt_progress_v10";
 
 // -------------------------
 // Overlays (confetti + transition only)
@@ -104,6 +103,33 @@ function spawnCelebrationConfetti({ x, y }) {
     layer.appendChild(el);
     setTimeout(() => el.remove(), 1200);
   }
+}
+
+// -------------------------
+// Account notifications
+// -------------------------
+function showNotification(message, type = "ok") {
+  let region = document.getElementById("notificationRegion");
+  if (!region) {
+    region = document.createElement("div");
+    region.id = "notificationRegion";
+    region.className = "notification-region";
+    region.setAttribute("aria-live", "polite");
+    region.setAttribute("aria-label", "Account notifications");
+    document.body.appendChild(region);
+  }
+
+  const note = document.createElement("div");
+  note.className = `notification ${type}`;
+  note.setAttribute("role", "status");
+  note.textContent = message;
+  region.appendChild(note);
+
+  setTimeout(() => note.classList.add("is-visible"), 20);
+  setTimeout(() => {
+    note.classList.remove("is-visible");
+    setTimeout(() => note.remove(), 220);
+  }, 3600);
 }
 
 // -------------------------
@@ -220,15 +246,6 @@ function sanitizeProgress(progress) {
   };
 }
 
-function loadLegacyProgress() {
-  try {
-    const raw = localStorage.getItem(LEGACY_PROGRESS_KEY);
-    return raw ? sanitizeProgress(JSON.parse(raw)) : defaultProgress();
-  } catch {
-    return defaultProgress();
-  }
-}
-
 function loadProgress() {
   const username = getCurrentUsername();
   if (!username) return defaultProgress();
@@ -265,7 +282,7 @@ async function createAccount(username, password) {
   database.users[key] = {
     username: validation.username,
     passwordHash: await hashPassword(validation.username, validation.password),
-    progress: loadLegacyProgress(),
+    progress: defaultProgress(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -424,6 +441,23 @@ function renderLeaderboard() {
   }
 }
 
+function openLeaderboardDialog(dialog) {
+  renderLeaderboard();
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
+}
+
+function closeLeaderboardDialog(dialog) {
+  if (typeof dialog.close === "function") {
+    dialog.close();
+  } else {
+    dialog.removeAttribute("open");
+  }
+}
+
 function bindLeaderboardDialog() {
   const openBtn = document.getElementById("openLeaderboardBtn");
   const closeBtn = document.getElementById("closeLeaderboardBtn");
@@ -431,25 +465,18 @@ function bindLeaderboardDialog() {
 
   if (openBtn && dialog && !openBtn.dataset.bound) {
     openBtn.dataset.bound = "true";
-    openBtn.addEventListener("click", () => {
-      renderLeaderboard();
-      if (typeof dialog.showModal === "function") {
-        dialog.showModal();
-      } else {
-        dialog.setAttribute("open", "");
-      }
-    });
+    openBtn.addEventListener("click", () => openLeaderboardDialog(dialog));
   }
 
   if (closeBtn && dialog && !closeBtn.dataset.bound) {
     closeBtn.dataset.bound = "true";
-    closeBtn.addEventListener("click", () => dialog.close());
+    closeBtn.addEventListener("click", () => closeLeaderboardDialog(dialog));
   }
 
   if (dialog && !dialog.dataset.bound) {
     dialog.dataset.bound = "true";
     dialog.addEventListener("click", (e) => {
-      if (e.target === dialog) dialog.close();
+      if (e.target === dialog) closeLeaderboardDialog(dialog);
     });
   }
 }
@@ -558,6 +585,7 @@ function bindAuthControls() {
     if (res.ok) {
       if (passwordEl) passwordEl.value = "";
       renderIndex();
+      showNotification(res.msg, "ok");
     }
   }
 
@@ -577,8 +605,10 @@ function bindAuthControls() {
   if (logoutBtn && !logoutBtn.dataset.bound) {
     logoutBtn.dataset.bound = "true";
     logoutBtn.addEventListener("click", () => {
+      const username = getCurrentUsername();
       logout();
       renderIndex();
+      showNotification(username ? `Logged out of ${username}.` : "Logged out.", "info");
     });
   }
 
