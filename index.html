@@ -12,25 +12,66 @@
       <div>
         <p class="eyebrow">Sequential puzzle hunt</p>
         <h1>Puzzle Hunt</h1>
-        <p class="muted hero-copy">Solve each rectangular puzzle card to reveal the next challenge. After all 11 puzzles are solved, the metapuzzle appears.</p>
+        <p class="muted hero-copy">Create an account or log back in to save your progress, solve each rectangular puzzle card, and climb the leaderboard.</p>
       </div>
       <aside class="status-panel" aria-label="Hunt progress">
+        <p id="accountText" class="account-status"></p>
         <p id="progressText" class="progress"></p>
         <p id="revealText" class="muted"></p>
-        <button id="resetBtn" class="secondary">Reset progress</button>
+        <div class="row">
+          <button id="logoutBtn" class="secondary" type="button">Log out</button>
+          <button id="resetBtn" class="secondary" type="button">Reset progress</button>
+        </div>
       </aside>
     </div>
   </header>
 
   <main class="container">
-    <div class="section-heading">
+    <section id="authPanel" class="auth-panel" aria-labelledby="authTitle">
       <div>
-        <p class="eyebrow">Puzzle board</p>
-        <h2>Available puzzles</h2>
+        <p class="eyebrow">Player account</p>
+        <h2 id="authTitle">Log in to play</h2>
+        <p class="muted">Progress, solved puzzles, and leaderboard entries are stored by username in this browser.</p>
       </div>
-      <p class="muted">Future cells stay hidden until the current puzzle is solved.</p>
-    </div>
-    <ul id="puzzleList" class="gallery"></ul>
+
+      <form id="authForm" class="auth-form">
+        <label>
+          <span>Username</span>
+          <input id="username" class="input" autocomplete="username" minlength="3" maxlength="24" required />
+        </label>
+        <label>
+          <span>Password</span>
+          <input id="password" class="input" type="password" autocomplete="current-password" minlength="4" required />
+        </label>
+        <div class="row">
+          <button id="loginBtn" type="submit">Log in</button>
+          <button id="registerBtn" class="secondary" type="button">Create account</button>
+        </div>
+        <p id="authFeedback" class="feedback" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="huntPanel" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Puzzle board</p>
+          <h2>Available puzzles</h2>
+        </div>
+        <p class="muted">Future cells stay hidden until the current puzzle is solved.</p>
+      </div>
+      <ul id="puzzleList" class="gallery"></ul>
+    </section>
+
+    <section class="leaderboard-section" aria-labelledby="leaderboardTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Leaderboard</p>
+          <h2 id="leaderboardTitle">Top solvers</h2>
+        </div>
+        <p class="muted">Ranked by number of solved puzzles, displayed by username.</p>
+      </div>
+      <ol id="leaderboardList" class="leaderboard"></ol>
+    </section>
   </main>
 
   <script src="app.js"></script>
