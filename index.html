@@ -19,6 +19,7 @@
         <p id="progressText" class="progress"></p>
         <p id="revealText" class="muted"></p>
         <div class="row">
+          <button id="openLeaderboardBtn" type="button">Leaderboard</button>
           <button id="logoutBtn" class="secondary" type="button">Log out</button>
           <button id="resetBtn" class="secondary" type="button">Reset progress</button>
         </div>
@@ -62,15 +63,6 @@
       <ul id="puzzleList" class="gallery"></ul>
     </section>
 
-    <section class="leaderboard-launch" aria-labelledby="leaderboardLaunchTitle">
-      <div>
-        <p class="eyebrow">Leaderboard</p>
-        <h2 id="leaderboardLaunchTitle">Top solvers</h2>
-        <p class="muted">Ranked by number of solved puzzles, displayed by username.</p>
-      </div>
-      <button id="openLeaderboardBtn" type="button">Open leaderboard</button>
-    </section>
-
     <dialog id="leaderboardDialog" class="leaderboard-dialog" aria-labelledby="leaderboardTitle">
       <div class="leaderboard-window">
         <div class="leaderboard-window-header">
@@ -85,6 +77,8 @@
       </div>
     </dialog>
   </main>
+
+  <div id="notificationRegion" class="notification-region" aria-live="polite" aria-label="Account notifications"></div>
 
   <script src="app.js"></script>
 </body>
