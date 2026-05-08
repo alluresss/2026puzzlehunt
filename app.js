@@ -1,14 +1,21 @@
-// app.js — Puzzle Hunt logic + soft locking + transitions + Wicked confetti
-// (Full file rewrite, keeping behavior the same: gallery, hide future puzzles,
-//  soft-lock redirects, no resubmits, show feedback then redirect on correct.)
+// app.js — Puzzle Hunt logic with sequential unlocks, soft locking, and celebrations.
 
 const PUZZLES = [
-  { id: 1, title: "The Red Fruit",     path: "puzzles/puzzle1.html", answer: "APPLE" },
-  { id: 2, title: "Orange Identity",   path: "puzzles/puzzle2.html", answer: "ORANGE" },
-  { id: 3, title: "Banana Business",   path: "puzzles/puzzle3.html", answer: "BANANA" },
+  { id: 1, title: "The Red Fruit", path: "puzzles/puzzle1.html", answer: "APPLE", kind: "Puzzle" },
+  { id: 2, title: "Orange Identity", path: "puzzles/puzzle2.html", answer: "ORANGE", kind: "Puzzle" },
+  { id: 3, title: "Banana Business", path: "puzzles/puzzle3.html", answer: "BANANA", kind: "Puzzle" },
+  { id: 4, title: "Puzzle 4", path: "puzzles/puzzle4.html", answer: "PUZZLE4", kind: "Puzzle" },
+  { id: 5, title: "Puzzle 5", path: "puzzles/puzzle5.html", answer: "PUZZLE5", kind: "Puzzle" },
+  { id: 6, title: "Puzzle 6", path: "puzzles/puzzle6.html", answer: "PUZZLE6", kind: "Puzzle" },
+  { id: 7, title: "Puzzle 7", path: "puzzles/puzzle7.html", answer: "PUZZLE7", kind: "Puzzle" },
+  { id: 8, title: "Puzzle 8", path: "puzzles/puzzle8.html", answer: "PUZZLE8", kind: "Puzzle" },
+  { id: 9, title: "Puzzle 9", path: "puzzles/puzzle9.html", answer: "PUZZLE9", kind: "Puzzle" },
+  { id: 10, title: "Puzzle 10", path: "puzzles/puzzle10.html", answer: "PUZZLE10", kind: "Puzzle" },
+  { id: 11, title: "Puzzle 11", path: "puzzles/puzzle11.html", answer: "PUZZLE11", kind: "Puzzle" },
+  { id: 12, title: "Metapuzzle", path: "puzzles/metapuzzle.html", answer: "META", kind: "Meta" },
 ];
 
-const STORAGE_KEY = "puzzle_hunt_progress_v9";
+const STORAGE_KEY = "puzzle_hunt_progress_v10";
 
 // -------------------------
 // Overlays (confetti + transition only)
@@ -31,10 +38,10 @@ function navigateWithTransition(href) {
   document.body.classList.add("pt-out");
   setTimeout(() => {
     window.location.href = href;
-  }, 520);
+  }, 420);
 }
 
-// Intercept same-site links for smooth transitions
+// Intercept same-site links for smooth transitions.
 function enableLinkTransitions() {
   document.addEventListener("click", (e) => {
     const a = e.target.closest("a");
@@ -52,61 +59,48 @@ function enableLinkTransitions() {
 }
 
 // -------------------------
-// Wicked confetti (MORE + Wicked palette)
+// Celebration confetti
 // -------------------------
 function rand(min, max) {
   return Math.random() * (max - min) + min;
 }
 
-function spawnWickedConfetti({ x, y }) {
+function spawnCelebrationConfetti({ x, y }) {
   ensureOverlays();
   const layer = document.getElementById("confettiLayer");
   if (!layer) return;
 
-  // Strong Wicked palette: emerald / neon green, hot pink, gold, icy white sparkle
   const colors = [
-    "rgba(22,242,165,.98)",  // emerald
-    "rgba(0,255,170,.95)",   // neon green accent
-    "rgba(255,79,216,.92)",  // wicked pink
-    "rgba(255,210,122,.90)", // gold
-    "rgba(255,255,255,.98)"  // sparkle white
+    "#2563eb",
+    "#06b6d4",
+    "#14b8a6",
+    "#f59e0b",
+    "#f8fafc",
   ];
 
-  // More confetti than before
-  const pieces = 110;
-
-  for (let i = 0; i < pieces; i++) {
+  for (let i = 0; i < 72; i++) {
     const el = document.createElement("div");
-    const isSpark = Math.random() < 0.55;
+    const isRibbon = Math.random() < 0.42;
 
-    el.className = "confetti" + (isSpark ? " spark" : "");
+    el.className = "confetti" + (isRibbon ? " ribbon" : "");
     el.style.background = colors[Math.floor(Math.random() * colors.length)];
-
-    // Start position (CSS variables read by style.css animation)
     el.style.setProperty("--x", `${x}px`);
     el.style.setProperty("--y", `${y}px`);
+    el.style.setProperty("--dx", `${rand(-280, 280)}px`);
+    el.style.setProperty("--dy", `${rand(-340, -95)}px`);
+    el.style.setProperty("--rot", `${rand(-720, 720)}deg`);
 
-    // Motion: wider + higher
-    const dx = rand(-360, 360);
-    const dy = rand(-420, -120);
-    const rot = rand(-820, 820);
-
-    el.style.setProperty("--dx", `${dx}px`);
-    el.style.setProperty("--dy", `${dy}px`);
-    el.style.setProperty("--rot", `${rot}deg`);
-
-    // Size variation
-    if (!isSpark) {
-      const s = rand(6, 14);
+    if (!isRibbon) {
+      const s = rand(6, 12);
       el.style.width = `${s}px`;
       el.style.height = `${s}px`;
     } else {
-      el.style.width = `${rand(14, 30)}px`;
-      el.style.height = `${rand(2, 4)}px`;
+      el.style.width = `${rand(12, 24)}px`;
+      el.style.height = `${rand(3, 5)}px`;
     }
 
     layer.appendChild(el);
-    setTimeout(() => el.remove(), 1300);
+    setTimeout(() => el.remove(), 1200);
   }
 }
 
@@ -126,10 +120,15 @@ function loadProgress() {
     if (!Number.isFinite(unlockedUpTo) || unlockedUpTo < 1) return fallback;
 
     const solvedSet = new Set(
-      solvedIds.map(Number).filter((n) => Number.isFinite(n) && n >= 1)
+      solvedIds
+        .map(Number)
+        .filter((n) => Number.isFinite(n) && n >= 1 && n <= PUZZLES.length)
     );
 
-    return { unlockedUpTo, solvedIds: Array.from(solvedSet) };
+    return {
+      unlockedUpTo: Math.min(unlockedUpTo, PUZZLES.length + 1),
+      solvedIds: Array.from(solvedSet),
+    };
   } catch {
     return fallback;
   }
@@ -170,19 +169,18 @@ function submitAnswer(puzzleId, inputValue) {
 
   if (guess === normalizeAnswer(puzzle.answer)) {
     const progress = loadProgress();
-
     const solved = new Set(progress.solvedIds);
     solved.add(puzzleId);
-    progress.solvedIds = Array.from(solved);
 
+    progress.solvedIds = Array.from(solved);
     progress.unlockedUpTo = Math.max(progress.unlockedUpTo, puzzleId + 1);
     saveProgress(progress);
 
     const isLast = puzzleId === PUZZLES[PUZZLES.length - 1].id;
     return {
       ok: true,
-      msg: isLast ? "Correct! Final puzzle solved ✨" : "Correct! Next puzzle unlocked ✨",
-      redirectHome: true
+      msg: isLast ? "Correct! Hunt complete ✨" : "Correct! Next puzzle unlocked ✨",
+      redirectHome: true,
     };
   }
 
@@ -202,45 +200,51 @@ function renderIndex() {
   if (!listEl) return;
 
   const progressEl = document.getElementById("progressText");
+  const revealEl = document.getElementById("revealText");
   const { unlockedUpTo, solvedIds } = loadProgress();
   const solvedSet = new Set(solvedIds);
-
-  // Only show puzzles up to the next available one
   const visible = PUZZLES.filter((p) => p.id <= unlockedUpTo);
+  const nextPuzzle = PUZZLES.find((p) => !solvedSet.has(p.id));
 
-  if (progressEl) progressEl.textContent = `Solved ${solvedSet.size} / ${PUZZLES.length}`;
+  if (progressEl) progressEl.textContent = `${solvedSet.size} of 12 solved`;
+  if (revealEl) {
+    revealEl.textContent = nextPuzzle
+      ? `${nextPuzzle.kind === "Meta" ? "The metapuzzle" : nextPuzzle.title} is available now.`
+      : "Every puzzle is solved. Congratulations!";
+  }
+
   listEl.innerHTML = "";
 
   for (const p of visible) {
     const solved = solvedSet.has(p.id);
-
     const li = document.createElement("li");
-    li.className = "card";
+    li.className = "card" + (p.kind === "Meta" ? " card-meta-puzzle" : "");
 
-    const top = document.createElement("div");
-    top.className = "card-top";
+    const index = document.createElement("span");
+    index.className = "card-index";
+    index.textContent = p.kind === "Meta" ? "META" : String(p.id).padStart(2, "0");
 
-    const name = document.createElement("div");
+    const name = document.createElement("h3");
     name.className = "puzzle-name";
     name.textContent = p.title;
 
-    const meta = document.createElement("div");
-    meta.className = "card-meta";
+    const label = document.createElement("p");
+    label.className = "card-label";
+    label.textContent = p.kind === "Meta" ? "Final metapuzzle" : "Main hunt puzzle";
 
     const badge = document.createElement("span");
     badge.className = "badge " + (solved ? "solved" : "unlocked");
-    badge.textContent = solved ? "Solved ✅" : "Unlocked";
-
-    meta.appendChild(badge);
-    top.appendChild(name);
-    top.appendChild(meta);
+    badge.textContent = solved ? "Solved" : "Available";
 
     const open = document.createElement("a");
     open.className = "button";
-    open.textContent = "Open";
+    open.textContent = solved ? "Review" : "Open puzzle";
     open.href = p.path;
 
-    li.appendChild(top);
+    li.appendChild(index);
+    li.appendChild(name);
+    li.appendChild(label);
+    li.appendChild(badge);
     li.appendChild(open);
     listEl.appendChild(li);
   }
@@ -270,5 +274,5 @@ window.PuzzleHunt = {
   submitAnswer,
   getPuzzleState,
   navigateWithTransition,
-  spawnWickedConfetti,
+  spawnCelebrationConfetti,
 };
