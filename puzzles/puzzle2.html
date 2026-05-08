@@ -7,14 +7,14 @@
   <link rel="stylesheet" href="../style.css" />
 </head>
 <body>
-  <main class="container">
-    <a class="button secondary" href="../index.html">← Back to Puzzle List</a>
+  <main class="container page-shell">
+    <a class="button secondary" href="../index.html">← Back to Puzzle Board</a>
 
     <h1 class="page-title">Orange Identity</h1>
-    <p class="page-subtitle">Read the embedded doc below, then submit your answer.</p>
+    <p class="page-subtitle">Read the embedded doc below, then submit your answer. Solving this page reveals the next cell on the home screen.</p>
 
     <div class="embed-wrap">
-      <!-- IMPORTANT: Use the *published* URL (File → Share → Publish to web) -->
+      <!-- Replace this with the published URL (File → Share → Publish to web). -->
       <iframe
         class="doc-embed"
         src="PASTE_PUZZLE_2_PUBLISHED_GOOGLE_DOC_LINK"
@@ -44,14 +44,12 @@
   <script>
     const puzzleId = 2;
 
-    // Soft-lock: if not unlocked, kick back home
     window.PuzzleHunt.requireUnlocked(puzzleId);
 
     const answerEl = document.getElementById("answer");
     const submitBtn = document.getElementById("submitBtn");
     const feedbackEl = document.getElementById("feedback");
 
-    // If already solved, disable resubmission
     const state = window.PuzzleHunt.getPuzzleState(puzzleId);
     if (state.solved) {
       answerEl.disabled = true;
@@ -87,7 +85,7 @@
       }
 
       const rect = submitBtn.getBoundingClientRect();
-      window.PuzzleHunt.spawnWickedConfetti({
+      window.PuzzleHunt.spawnCelebrationConfetti({
         x: rect.left + rect.width / 2,
         y: rect.top + rect.height / 2
       });

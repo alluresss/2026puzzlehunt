@@ -7,20 +7,29 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <div class="container">
-      <h1>Puzzle Hunt</h1>
-      <p class="muted">Solve puzzles in order. New puzzles appear only after you solve the current one.</p>
-      <p id="progressText" class="progress"></p>
-
-      <div class="row">
-        <button id="resetBtn" class="secondary">Reset progress (this device)</button>
+  <header class="hero">
+    <div class="container hero-grid">
+      <div>
+        <p class="eyebrow">Sequential puzzle hunt</p>
+        <h1>Puzzle Hunt</h1>
+        <p class="muted hero-copy">Solve each rectangular puzzle card to reveal the next challenge. After all 11 puzzles are solved, the metapuzzle appears.</p>
       </div>
+      <aside class="status-panel" aria-label="Hunt progress">
+        <p id="progressText" class="progress"></p>
+        <p id="revealText" class="muted"></p>
+        <button id="resetBtn" class="secondary">Reset progress</button>
+      </aside>
     </div>
   </header>
 
   <main class="container">
-    <h2>Puzzles</h2>
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Puzzle board</p>
+        <h2>Available puzzles</h2>
+      </div>
+      <p class="muted">Future cells stay hidden until the current puzzle is solved.</p>
+    </div>
     <ul id="puzzleList" class="gallery"></ul>
   </main>
 
