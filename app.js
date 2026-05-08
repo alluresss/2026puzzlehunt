@@ -377,7 +377,15 @@ function submitAnswer(puzzleId, inputValue) {
 
 function getPuzzleState(puzzleId) {
   const { unlockedUpTo, solvedIds } = loadProgress();
-  return { unlockedUpTo, solved: solvedIds.includes(puzzleId), loggedIn: Boolean(getCurrentUsername()) };
+  const solved = solvedIds.includes(puzzleId);
+  const puzzle = PUZZLES.find((p) => p.id === puzzleId);
+
+  return {
+    unlockedUpTo,
+    solved,
+    loggedIn: Boolean(getCurrentUsername()),
+    answer: solved ? puzzle?.answer ?? "" : "",
+  };
 }
 
 // -------------------------
@@ -413,6 +421,36 @@ function renderLeaderboard() {
     item.appendChild(name);
     item.appendChild(score);
     leaderboardEl.appendChild(item);
+  }
+}
+
+function bindLeaderboardDialog() {
+  const openBtn = document.getElementById("openLeaderboardBtn");
+  const closeBtn = document.getElementById("closeLeaderboardBtn");
+  const dialog = document.getElementById("leaderboardDialog");
+
+  if (openBtn && dialog && !openBtn.dataset.bound) {
+    openBtn.dataset.bound = "true";
+    openBtn.addEventListener("click", () => {
+      renderLeaderboard();
+      if (typeof dialog.showModal === "function") {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute("open", "");
+      }
+    });
+  }
+
+  if (closeBtn && dialog && !closeBtn.dataset.bound) {
+    closeBtn.dataset.bound = "true";
+    closeBtn.addEventListener("click", () => dialog.close());
+  }
+
+  if (dialog && !dialog.dataset.bound) {
+    dialog.dataset.bound = "true";
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) dialog.close();
+    });
   }
 }
 
@@ -561,6 +599,7 @@ document.addEventListener("DOMContentLoaded", () => {
   ensureOverlays();
   enableLinkTransitions();
   bindAuthControls();
+  bindLeaderboardDialog();
   renderIndex();
 });
 

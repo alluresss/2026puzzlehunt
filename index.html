@@ -62,16 +62,28 @@
       <ul id="puzzleList" class="gallery"></ul>
     </section>
 
-    <section class="leaderboard-section" aria-labelledby="leaderboardTitle">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Leaderboard</p>
-          <h2 id="leaderboardTitle">Top solvers</h2>
-        </div>
+    <section class="leaderboard-launch" aria-labelledby="leaderboardLaunchTitle">
+      <div>
+        <p class="eyebrow">Leaderboard</p>
+        <h2 id="leaderboardLaunchTitle">Top solvers</h2>
         <p class="muted">Ranked by number of solved puzzles, displayed by username.</p>
       </div>
-      <ol id="leaderboardList" class="leaderboard"></ol>
+      <button id="openLeaderboardBtn" type="button">Open leaderboard</button>
     </section>
+
+    <dialog id="leaderboardDialog" class="leaderboard-dialog" aria-labelledby="leaderboardTitle">
+      <div class="leaderboard-window">
+        <div class="leaderboard-window-header">
+          <div>
+            <p class="eyebrow">Leaderboard</p>
+            <h2 id="leaderboardTitle">Top solvers</h2>
+          </div>
+          <button id="closeLeaderboardBtn" class="secondary icon-button" type="button" aria-label="Close leaderboard">×</button>
+        </div>
+        <p class="muted leaderboard-window-copy">Ranked by number of solved puzzles, displayed by username.</p>
+        <ol id="leaderboardList" class="leaderboard"></ol>
+      </div>
+    </dialog>
   </main>
 
   <script src="app.js"></script>
