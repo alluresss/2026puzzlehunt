@@ -17,6 +17,7 @@ const PUZZLES = [
 
 const DATABASE_KEY = "puzzle_hunt_database_v1";
 const SESSION_KEY = "puzzle_hunt_current_user_v1";
+const ADMIN_ACCOUNT = { username: "easonadmin", password: "adminadmin" };
 
 // -------------------------
 // Overlays (confetti + transition only)
@@ -171,6 +172,14 @@ function usernameKey(username) {
   return normalizeUsername(username).toLowerCase();
 }
 
+function isAdminUsername(username) {
+  return usernameKey(username) === usernameKey(ADMIN_ACCOUNT.username);
+}
+
+function isCurrentUserAdmin() {
+  return isAdminUsername(sessionStorage.getItem(SESSION_KEY));
+}
+
 function validateCredentials(username, password) {
   const cleanUsername = normalizeUsername(username);
   const rawPassword = (password ?? "").toString();
@@ -212,6 +221,7 @@ async function hashPassword(username, password) {
 function getCurrentUsername() {
   const username = normalizeUsername(sessionStorage.getItem(SESSION_KEY));
   if (!username) return null;
+  if (isAdminUsername(username)) return ADMIN_ACCOUNT.username;
 
   const database = loadDatabase();
   return database.users[usernameKey(username)] ? username : null;
@@ -249,6 +259,7 @@ function sanitizeProgress(progress) {
 function loadProgress() {
   const username = getCurrentUsername();
   if (!username) return defaultProgress();
+  if (isAdminUsername(username)) return { unlockedUpTo: PUZZLES.length, solvedIds: [] };
 
   const database = loadDatabase();
   const user = database.users[usernameKey(username)];
@@ -272,6 +283,9 @@ function saveProgress(progress) {
 async function createAccount(username, password) {
   const validation = validateCredentials(username, password);
   if (!validation.ok) return validation;
+  if (isAdminUsername(validation.username)) {
+    return { ok: false, msg: "That username is reserved for hunt administration." };
+  }
 
   const database = loadDatabase();
   const key = usernameKey(validation.username);
@@ -296,6 +310,13 @@ async function login(username, password) {
   const validation = validateCredentials(username, password);
   if (!validation.ok) return validation;
 
+  if (isAdminUsername(validation.username)) {
+    if (validation.password !== ADMIN_ACCOUNT.password) return { ok: false, msg: "Incorrect password." };
+
+    setCurrentUsername(ADMIN_ACCOUNT.username);
+    return { ok: true, msg: "Welcome, admin. All puzzles and account tools are unlocked." };
+  }
+
   const database = loadDatabase();
   const user = database.users[usernameKey(validation.username)];
   if (!user) return { ok: false, msg: "No account found for that username." };
@@ -313,13 +334,35 @@ function logout() {
 
 function resetCurrentProgress() {
   const username = getCurrentUsername();
-  if (!username) return false;
+  if (!username || isAdminUsername(username)) return false;
   return saveProgress(defaultProgress());
 }
 
-function getLeaderboard() {
+function deleteUserAccount(username) {
+  if (isAdminUsername(username)) return { ok: false, msg: "The admin account cannot be deleted." };
+
+  const database = loadDatabase();
+  const key = usernameKey(username);
+  const user = database.users[key];
+  if (!user) return { ok: false, msg: "That account no longer exists." };
+
+  delete database.users[key];
+  saveDatabase(database);
+
+  const currentUsername = normalizeUsername(sessionStorage.getItem(SESSION_KEY));
+  if (usernameKey(currentUsername) === key) clearCurrentUsername();
+
+  return { ok: true, msg: `Deleted account for ${user.username}.` };
+}
+
+function getPlayerRows() {
   const database = loadDatabase();
   return Object.values(database.users)
+    .filter((user) => user?.username && !isAdminUsername(user.username));
+}
+
+function getLeaderboard() {
+  return getPlayerRows()
     .map((user) => {
       const progress = sanitizeProgress(user.progress);
       return {
@@ -488,6 +531,59 @@ function setFeedback(element, ok, msg) {
   element.classList.add(ok ? "ok" : "bad");
 }
 
+function renderAdminPanel() {
+  const panel = document.getElementById("adminPanel");
+  const list = document.getElementById("adminUserList");
+  const isAdmin = isCurrentUserAdmin();
+
+  if (panel) panel.hidden = !isAdmin;
+  if (!list) return;
+
+  list.innerHTML = "";
+  if (!isAdmin) return;
+
+  const rows = getPlayerRows()
+    .map((user) => ({
+      ...user,
+      progress: sanitizeProgress(user.progress),
+    }))
+    .sort((a, b) => a.username.localeCompare(b.username));
+
+  if (!rows.length) {
+    const empty = document.createElement("li");
+    empty.className = "admin-user-empty";
+    empty.textContent = "No player accounts exist yet.";
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const user of rows) {
+    const item = document.createElement("li");
+    item.className = "admin-user-row";
+
+    const summary = document.createElement("div");
+    summary.className = "admin-user-summary";
+
+    const name = document.createElement("strong");
+    name.textContent = user.username;
+
+    const details = document.createElement("span");
+    details.textContent = `${user.progress.solvedIds.length} / ${PUZZLES.length} solved`;
+
+    const button = document.createElement("button");
+    button.className = "danger";
+    button.type = "button";
+    button.textContent = "Delete account";
+    button.dataset.deleteUser = user.username;
+
+    summary.appendChild(name);
+    summary.appendChild(details);
+    item.appendChild(summary);
+    item.appendChild(button);
+    list.appendChild(item);
+  }
+}
+
 function renderIndex() {
   const authPanel = document.getElementById("authPanel");
   const huntPanel = document.getElementById("huntPanel");
@@ -498,13 +594,15 @@ function renderIndex() {
   const logoutBtn = document.getElementById("logoutBtn");
   const resetBtn = document.getElementById("resetBtn");
   const username = getCurrentUsername();
+  const isAdmin = isCurrentUserAdmin();
 
   renderLeaderboard();
+  renderAdminPanel();
 
   if (authPanel) authPanel.hidden = Boolean(username);
   if (huntPanel) huntPanel.hidden = !username;
   if (logoutBtn) logoutBtn.hidden = !username;
-  if (resetBtn) resetBtn.hidden = !username;
+  if (resetBtn) resetBtn.hidden = !username || isAdmin;
   if (accountEl) accountEl.textContent = username ? `Logged in as ${username}` : "Not logged in";
 
   if (!username) {
@@ -518,14 +616,20 @@ function renderIndex() {
 
   const { unlockedUpTo, solvedIds } = loadProgress();
   const solvedSet = new Set(solvedIds);
-  const visible = PUZZLES.filter((p) => p.id <= unlockedUpTo);
+  const visible = isAdmin ? PUZZLES : PUZZLES.filter((p) => p.id <= unlockedUpTo);
   const nextPuzzle = PUZZLES.find((p) => !solvedSet.has(p.id));
 
-  if (progressEl) progressEl.textContent = `${solvedSet.size} of ${PUZZLES.length} solved`;
+  if (progressEl) {
+    progressEl.textContent = isAdmin
+      ? `Admin access: ${PUZZLES.length} puzzles visible`
+      : `${solvedSet.size} of ${PUZZLES.length} solved`;
+  }
   if (revealEl) {
-    revealEl.textContent = nextPuzzle
-      ? `${nextPuzzle.kind === "Meta" ? "The metapuzzle" : nextPuzzle.title} is available now.`
-      : "Every puzzle is solved. Congratulations!";
+    revealEl.textContent = isAdmin
+      ? "All puzzles are available for review, and admin tools are enabled."
+      : nextPuzzle
+        ? `${nextPuzzle.kind === "Meta" ? "The metapuzzle" : nextPuzzle.title} is available now.`
+        : "Every puzzle is solved. Congratulations!";
   }
 
   listEl.innerHTML = "";
@@ -549,11 +653,11 @@ function renderIndex() {
 
     const badge = document.createElement("span");
     badge.className = "badge " + (solved ? "solved" : "unlocked");
-    badge.textContent = solved ? "Solved" : "Available";
+    badge.textContent = solved ? "Solved" : isAdmin ? "Admin" : "Available";
 
     const open = document.createElement("a");
     open.className = "button";
-    open.textContent = solved ? "Review" : "Open puzzle";
+    open.textContent = solved || isAdmin ? "Review" : "Open puzzle";
     open.href = p.path;
 
     li.appendChild(index);
@@ -573,6 +677,7 @@ function bindAuthControls() {
   const usernameEl = document.getElementById("username");
   const passwordEl = document.getElementById("password");
   const feedbackEl = document.getElementById("authFeedback");
+  const adminUserList = document.getElementById("adminUserList");
 
   async function runAuth(action) {
     const username = usernameEl?.value ?? "";
@@ -618,6 +723,21 @@ function bindAuthControls() {
       resetCurrentProgress();
       renderIndex();
       alert("Progress reset for the logged-in account.");
+    });
+  }
+
+  if (adminUserList && !adminUserList.dataset.bound) {
+    adminUserList.dataset.bound = "true";
+    adminUserList.addEventListener("click", (e) => {
+      const button = e.target.closest("[data-delete-user]");
+      if (!button || !isCurrentUserAdmin()) return;
+
+      const username = button.dataset.deleteUser;
+      if (!confirm(`Delete ${username}'s account and all saved progress?`)) return;
+
+      const res = deleteUserAccount(username);
+      renderIndex();
+      showNotification(res.msg, res.ok ? "ok" : "info");
     });
   }
 }
