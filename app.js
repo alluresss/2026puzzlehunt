@@ -396,6 +396,37 @@ function sanitizePuzzleStats(stats) {
   );
 }
 
+function getCurrentPuzzle(progress) {
+  const cleanProgress = sanitizeProgress(progress);
+  const solvedSet = new Set(cleanProgress.solvedIds);
+  const currentPuzzle = PUZZLES.find((puzzle) => puzzle.id <= cleanProgress.unlockedUpTo && !solvedSet.has(puzzle.id));
+  return currentPuzzle || null;
+}
+
+function secondsSince(value) {
+  if (!value) return 0;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 0;
+  return Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+}
+
+function formatCurrentPuzzleStatus(user) {
+  const progress = sanitizeProgress(user?.progress);
+  const currentPuzzle = getCurrentPuzzle(progress);
+
+  if (!currentPuzzle) return "Current puzzle: hunt complete";
+
+  const stats = sanitizePuzzleStats(user?.puzzleStats);
+  const currentStats = stats[String(currentPuzzle.id)];
+  const puzzleLabel = `${currentPuzzle.kind === "Meta" ? "Metapuzzle" : `Puzzle ${currentPuzzle.id}`}: ${currentPuzzle.title}`;
+
+  if (!currentStats?.firstOpenedAt) {
+    return `Current puzzle: ${puzzleLabel} — not opened yet`;
+  }
+
+  return `Current puzzle: ${puzzleLabel} — ${formatDuration(secondsSince(currentStats.firstOpenedAt))} since first opened (${formatDuration(currentStats.totalSeconds)} tracked working time)`;
+}
+
 function getLeaderboard() {
   return getPlayerRows()
     .map((user) => {
@@ -1098,6 +1129,10 @@ function renderAdminPanel() {
         const details = document.createElement("span");
         details.textContent = `${user.progress.solvedIds.length} / ${PUZZLES.length} solved`;
 
+        const currentPuzzle = document.createElement("span");
+        currentPuzzle.className = "admin-current-puzzle";
+        currentPuzzle.textContent = formatCurrentPuzzleStatus(user);
+
         const timeList = document.createElement("ul");
         timeList.className = "admin-time-list";
         const timeRows = Object.values(user.puzzleStats)
@@ -1122,6 +1157,7 @@ function renderAdminPanel() {
 
         summary.appendChild(name);
         summary.appendChild(details);
+        summary.appendChild(currentPuzzle);
         summary.appendChild(timeList);
         item.appendChild(summary);
         item.appendChild(button);

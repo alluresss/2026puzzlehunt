@@ -530,6 +530,10 @@ body.pt-out #pageTransition{
   font-weight:800;
 }
 
+.admin-user-summary .admin-current-puzzle{
+  color:var(--teal);
+}
+
 .leaderboard-row,
 .leaderboard-empty{
   border:1px solid var(--line);
