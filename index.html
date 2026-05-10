@@ -58,8 +58,13 @@
           <p class="eyebrow">Admin tools</p>
           <h2 id="adminTitle">User accounts</h2>
         </div>
-        <p class="muted">Review player accounts, tracked puzzle time, and each personalized hint request.</p>
+        <p class="muted">Review player accounts, time since each puzzle was first opened, and each hint request.</p>
       </div>
+      <div class="row admin-heading-actions">
+        <button id="postPublicHintBtn" type="button">Post Public Hint/Clarification</button>
+      </div>
+      <h3>Public hints/clarifications</h3>
+      <ul id="adminPublicHintList" class="admin-user-list public-hint-list"></ul>
       <h3>Hint requests</h3>
       <ul id="adminHintList" class="admin-user-list hint-request-list"></ul>
       <h3>Player accounts</h3>
