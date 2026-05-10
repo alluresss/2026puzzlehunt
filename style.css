@@ -866,3 +866,32 @@ body.pt-out #pageTransition{
   font-weight:800;
   line-height:1.45;
 }
+
+.admin-heading-actions{
+  margin:0 0 22px;
+}
+
+.public-hint-list{
+  margin-bottom:24px;
+}
+
+.public-hint-form label span{
+  display:block;
+  margin:14px 0 8px;
+  color:var(--muted);
+  font-weight:800;
+  line-height:1.55;
+}
+
+.public-hint-form select.input{
+  max-width:none;
+}
+
+.hint-history-list li.public-hint-item{
+  border-color:rgba(37,99,235,.24);
+  background:rgba(37,99,235,.08);
+}
+
+.hint-history-list li.public-hint-item strong{
+  color:var(--blue-dark);
+}
