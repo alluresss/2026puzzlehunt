@@ -19,6 +19,7 @@ const DATABASE_KEY = "puzzle_hunt_database_v1";
 const SESSION_KEY = "puzzle_hunt_current_user_v1";
 const ADMIN_ACCOUNT = { username: "easonadmin", password: "adminadmin" };
 const HINT_EMAIL = "easond29@lakesideschool.org";
+const HINT_EMAIL_ENDPOINT = `https://formsubmit.co/ajax/${HINT_EMAIL}`;
 
 // -------------------------
 // Overlays (confetti + transition only)
@@ -143,6 +144,10 @@ function defaultProgress() {
 
 function defaultHintRequests() {
   return [];
+}
+
+function defaultPuzzleStats() {
+  return {};
 }
 
 function defaultDatabase() {
@@ -303,6 +308,7 @@ async function createAccount(username, password) {
     passwordHash: await hashPassword(validation.username, validation.password),
     progress: defaultProgress(),
     hintRequests: defaultHintRequests(),
+    puzzleStats: defaultPuzzleStats(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -365,6 +371,29 @@ function getPlayerRows() {
   const database = loadDatabase();
   return Object.values(database.users)
     .filter((user) => user?.username && !isAdminUsername(user.username));
+}
+
+function sanitizePuzzleStats(stats) {
+  if (!stats || typeof stats !== "object") return defaultPuzzleStats();
+
+  return Object.fromEntries(
+    Object.entries(stats)
+      .map(([rawPuzzleId, rawStat]) => {
+        const puzzleId = Number(rawPuzzleId);
+        const puzzle = getPuzzleById(puzzleId);
+        if (!puzzle || !rawStat || typeof rawStat !== "object") return null;
+
+        const totalSeconds = Number(rawStat.totalSeconds);
+        return [String(puzzleId), {
+          puzzleId,
+          puzzleTitle: rawStat.puzzleTitle || puzzle.title,
+          firstOpenedAt: rawStat.firstOpenedAt || "",
+          lastOpenedAt: rawStat.lastOpenedAt || "",
+          totalSeconds: Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : 0,
+        }];
+      })
+      .filter(Boolean)
+  );
 }
 
 function getLeaderboard() {
@@ -438,11 +467,55 @@ function buildHintEmail({ username, puzzle, progressText }) {
   const subject = `${username} Hint Request for Puzzle ${puzzle.id}`;
   const body = `Hi Eason,\n\nThe individual ${username} has requested a hint for Puzzle ${puzzle.id}, Titled ${puzzle.title}. Their progress so far: ${progressText}.\n\nPlease go to your admin account to address this request.`;
 
-  return {
-    subject,
-    body,
-    mailto: `mailto:${HINT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+  return { subject, body };
+}
+
+function todayKey(date = new Date()) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function getCurrentUserHintRequests() {
+  const username = getCurrentUsername();
+  if (!username || isAdminUsername(username)) return [];
+
+  const database = loadDatabase();
+  return getUserHintRequests(database.users[usernameKey(username)]);
+}
+
+function getTodaysHintRequest() {
+  const day = todayKey();
+  return getCurrentUserHintRequests().find((request) => todayKey(new Date(request.createdAt)) === day) || null;
+}
+
+function getHintRequestsForPuzzle(puzzleId) {
+  return getCurrentUserHintRequests()
+    .filter((request) => request.puzzleId === Number(puzzleId))
+    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+}
+
+function sendHintRequestEmail({ username, puzzle, progressText }) {
+  const email = buildHintEmail({ username, puzzle, progressText });
+  const payload = {
+    _subject: email.subject,
+    name: username,
+    puzzle: `Puzzle ${puzzle.id}: ${puzzle.title}`,
+    message: email.body,
+    progress: progressText,
   };
+
+  return fetch(HINT_EMAIL_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  }).catch(() => null);
 }
 
 function requestHint(puzzleId, progressText) {
@@ -455,7 +528,11 @@ function requestHint(puzzleId, progressText) {
   if (!puzzle) return { ok: false, msg: "Puzzle not found." };
   if (!cleanProgress) return { ok: false, msg: "Please describe your thought process before sending." };
 
-  const email = buildHintEmail({ username, puzzle, progressText: cleanProgress });
+  const existingToday = getTodaysHintRequest();
+  if (existingToday) {
+    return { ok: false, msg: "You can request one hint per day. Please try again tomorrow." };
+  }
+
   const request = sanitizeHintRequest({
     puzzleId: puzzle.id,
     puzzleTitle: puzzle.title,
@@ -468,8 +545,8 @@ function requestHint(puzzleId, progressText) {
     return { ok: false, msg: "Unable to save this hint request. Please try again." };
   }
 
-  window.location.href = email.mailto;
-  return { ok: true, msg: "Hint request saved. Your email app should open with the request ready to send." };
+  sendHintRequestEmail({ username, puzzle, progressText: cleanProgress });
+  return { ok: true, msg: "Hint request sent. You can request one hint per day." };
 }
 
 function updateHintRequest(username, requestId, changes) {
@@ -546,6 +623,83 @@ function isSolved(puzzleId) {
 }
 
 // -------------------------
+// Puzzle time tracking
+// -------------------------
+const activePuzzleTimer = { puzzleId: null, startedAt: 0 };
+
+function recordPuzzleTime(puzzleId, elapsedSeconds = 0) {
+  const username = getCurrentUsername();
+  const puzzle = getPuzzleById(puzzleId);
+  if (!username || isAdminUsername(username) || !puzzle) return false;
+
+  const database = loadDatabase();
+  const key = usernameKey(username);
+  const user = database.users[key];
+  if (!user) return false;
+
+  const now = new Date().toISOString();
+  const stats = sanitizePuzzleStats(user.puzzleStats);
+  const previous = stats[String(puzzle.id)] || {
+    puzzleId: puzzle.id,
+    puzzleTitle: puzzle.title,
+    firstOpenedAt: now,
+    lastOpenedAt: now,
+    totalSeconds: 0,
+  };
+
+  stats[String(puzzle.id)] = {
+    ...previous,
+    puzzleTitle: puzzle.title,
+    firstOpenedAt: previous.firstOpenedAt || now,
+    lastOpenedAt: now,
+    totalSeconds: previous.totalSeconds + Math.max(0, elapsedSeconds),
+  };
+
+  user.puzzleStats = stats;
+  user.updatedAt = now;
+  saveDatabase(database);
+  return true;
+}
+
+function flushPuzzleTimer({ pause = false } = {}) {
+  if (!activePuzzleTimer.puzzleId || !activePuzzleTimer.startedAt) return;
+
+  const elapsedSeconds = Math.floor((Date.now() - activePuzzleTimer.startedAt) / 1000);
+  if (elapsedSeconds > 0) recordPuzzleTime(activePuzzleTimer.puzzleId, elapsedSeconds);
+  activePuzzleTimer.startedAt = pause ? 0 : Date.now();
+}
+
+function resumePuzzleTimer() {
+  if (activePuzzleTimer.puzzleId && !activePuzzleTimer.startedAt) {
+    activePuzzleTimer.startedAt = Date.now();
+  }
+}
+
+function startPuzzleTimer(puzzleId) {
+  const puzzle = getPuzzleById(puzzleId);
+  if (!puzzle || isAdminUsername(getCurrentUsername())) return;
+
+  if (activePuzzleTimer.puzzleId !== puzzle.id) {
+    flushPuzzleTimer();
+    activePuzzleTimer.puzzleId = puzzle.id;
+  }
+
+  activePuzzleTimer.startedAt = Date.now();
+  recordPuzzleTime(puzzle.id, 0);
+}
+
+function formatDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m ${remainingSeconds}s`;
+  return `${remainingSeconds}s`;
+}
+
+// -------------------------
 // Puzzle API
 // -------------------------
 function requireUnlocked(puzzleId) {
@@ -557,7 +711,10 @@ function requireUnlocked(puzzleId) {
   const { unlockedUpTo } = loadProgress();
   if (puzzleId > unlockedUpTo) {
     navigateWithTransition("../index.html");
+    return;
   }
+
+  startPuzzleTimer(puzzleId);
 }
 
 function submitAnswer(puzzleId, inputValue) {
@@ -706,11 +863,77 @@ function showPendingHintResponses() {
       } else {
         showMessageDialog(
           `Your Hint Request for Puzzle ${response.puzzleId} has been APPROVED`,
-          response.responseText
+          `Your personalized hint: ${response.responseText}`
         );
       }
     }, index * 250);
   });
+}
+
+function formatRequestDate(value) {
+  if (!value) return "Unknown date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+
+function renderPuzzleHintPanel(puzzleId) {
+  const button = document.getElementById("requestHintBtn");
+  const answerSection = button?.closest(".answer-section");
+  if (!answerSection || isAdminUsername(getCurrentUsername())) return;
+
+  let panel = document.getElementById("puzzleHintPanel");
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "puzzleHintPanel";
+    panel.className = "puzzle-hint-panel";
+    answerSection.appendChild(panel);
+  }
+
+  const todaysRequest = getTodaysHintRequest();
+  const requests = getHintRequestsForPuzzle(puzzleId);
+  const approved = requests.filter((request) => request.status === "approved" && request.responseText);
+
+  panel.innerHTML = "";
+
+  const title = document.createElement("h3");
+  title.textContent = "Hints";
+
+  const limit = document.createElement("p");
+  limit.className = "hint-limit-note";
+  limit.textContent = todaysRequest
+    ? "You have already used today’s hint request. You can request another hint tomorrow."
+    : "You can request one personalized hint per day.";
+
+  panel.appendChild(title);
+  panel.appendChild(limit);
+
+  if (!approved.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint-history-empty";
+    empty.textContent = requests.length
+      ? "No approved hints for this puzzle yet. Approved hints will stay here after the popup is closed."
+      : "Approved hints for this puzzle will appear here after the admin responds.";
+    panel.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "hint-history-list";
+  for (const request of approved) {
+    const item = document.createElement("li");
+
+    const heading = document.createElement("strong");
+    heading.textContent = `Approved ${formatRequestDate(request.decidedAt || request.createdAt)}`;
+
+    const body = document.createElement("p");
+    body.textContent = `Your personalized hint: ${request.responseText}`;
+
+    item.appendChild(heading);
+    item.appendChild(body);
+    list.appendChild(item);
+  }
+  panel.appendChild(list);
 }
 
 function showHintRequestDialog(puzzleId) {
@@ -726,7 +949,7 @@ function showHintRequestDialog(puzzleId) {
         <button class="secondary icon-button" value="cancel" type="button" aria-label="Close">×</button>
       </div>
       <label>
-        <span>please tell us your thought process on the puzzle so far so we can provide a personalized hint; remember that hint requests can be denied</span>
+        <span>Please tell us your thought process so far so we can provide a personalized hint. You can request one hint per day, and requests can be denied.</span>
         <textarea class="input hint-request-textarea" rows="7" required></textarea>
       </label>
       <p class="feedback" role="status" aria-live="polite"></p>
@@ -756,6 +979,7 @@ function showHintRequestDialog(puzzleId) {
     }
 
     closeDialog(dialog);
+    renderPuzzleHintPanel(puzzleId);
     showNotification(res.msg, "ok");
   });
 
@@ -769,9 +993,17 @@ function bindHintRequestButton(puzzleId) {
   if (!button || button.dataset.bound) return;
 
   button.dataset.bound = "true";
+  renderPuzzleHintPanel(puzzleId);
   button.addEventListener("click", () => {
     if (!getCurrentUsername()) {
       showNotification("Log in before requesting a hint.", "info");
+      return;
+    }
+
+    const todaysRequest = getTodaysHintRequest();
+    if (todaysRequest) {
+      showNotification("You can request one hint per day. Please try again tomorrow.", "info");
+      renderPuzzleHintPanel(puzzleId);
       return;
     }
 
@@ -842,6 +1074,7 @@ function renderAdminPanel() {
       ...user,
       progress: sanitizeProgress(user.progress),
       hintRequests: getUserHintRequests(user),
+      puzzleStats: sanitizePuzzleStats(user.puzzleStats),
     }))
     .sort((a, b) => a.username.localeCompare(b.username));
 
@@ -865,6 +1098,22 @@ function renderAdminPanel() {
         const details = document.createElement("span");
         details.textContent = `${user.progress.solvedIds.length} / ${PUZZLES.length} solved`;
 
+        const timeList = document.createElement("ul");
+        timeList.className = "admin-time-list";
+        const timeRows = Object.values(user.puzzleStats)
+          .sort((a, b) => a.puzzleId - b.puzzleId);
+        if (!timeRows.length) {
+          const timeItem = document.createElement("li");
+          timeItem.textContent = "No puzzle time tracked yet.";
+          timeList.appendChild(timeItem);
+        } else {
+          for (const stat of timeRows) {
+            const timeItem = document.createElement("li");
+            timeItem.textContent = `Puzzle ${stat.puzzleId}: ${formatDuration(stat.totalSeconds)} working time`;
+            timeList.appendChild(timeItem);
+          }
+        }
+
         const button = document.createElement("button");
         button.className = "danger";
         button.type = "button";
@@ -873,6 +1122,7 @@ function renderAdminPanel() {
 
         summary.appendChild(name);
         summary.appendChild(details);
+        summary.appendChild(timeList);
         item.appendChild(summary);
         item.appendChild(button);
         list.appendChild(item);
@@ -1159,6 +1409,16 @@ function bindAuthControls() {
 // -------------------------
 // Init
 // -------------------------
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    flushPuzzleTimer({ pause: true });
+  } else {
+    resumePuzzleTimer();
+  }
+});
+
+window.addEventListener("beforeunload", flushPuzzleTimer);
+
 document.addEventListener("DOMContentLoaded", () => {
   ensureOverlays();
   enableLinkTransitions();
@@ -1175,4 +1435,5 @@ window.PuzzleHunt = {
   navigateWithTransition,
   spawnCelebrationConfetti,
   bindHintRequestButton,
+  renderPuzzleHintPanel,
 };

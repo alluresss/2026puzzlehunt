@@ -798,3 +798,67 @@ body.pt-out #pageTransition{
   max-width:none;
   resize:vertical;
 }
+
+/* =========================
+   Persistent puzzle hints + time tracking
+========================= */
+.puzzle-hint-panel{
+  margin-top:18px;
+  border-top:1px solid var(--line);
+  padding-top:16px;
+  display:grid;
+  gap:10px;
+}
+
+.puzzle-hint-panel h3{
+  margin:0;
+  font-size:20px;
+  letter-spacing:-.02em;
+}
+
+.hint-limit-note,
+.hint-history-empty{
+  margin:0;
+  color:var(--muted);
+  font-weight:800;
+  line-height:1.55;
+}
+
+.hint-history-list{
+  margin:0;
+  padding:0;
+  list-style:none;
+  display:grid;
+  gap:10px;
+}
+
+.hint-history-list li{
+  border:1px solid rgba(15,118,110,.24);
+  border-radius:16px;
+  background:rgba(20,184,166,.08);
+  padding:12px 14px;
+}
+
+.hint-history-list strong{
+  display:block;
+  color:var(--teal);
+  margin-bottom:6px;
+}
+
+.hint-history-list p{
+  margin:0;
+  color:var(--text);
+  font-weight:800;
+  line-height:1.55;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+
+.admin-time-list{
+  margin:8px 0 0;
+  padding-left:18px;
+  color:var(--muted);
+  font-size:13px;
+  font-weight:800;
+  line-height:1.45;
+}
