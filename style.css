@@ -678,3 +678,123 @@ body.pt-out #pageTransition{
   transform:translateY(0);
   opacity:1;
 }
+
+/* =========================
+   Hint requests
+========================= */
+.hint-request-list{
+  margin-bottom:24px;
+}
+
+.hint-request-row{
+  border:1px solid var(--line);
+  border-radius:18px;
+  background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(248,251,255,.92));
+  padding:14px 16px;
+  display:grid;
+  gap:10px;
+}
+
+.hint-request-row strong{
+  font-size:18px;
+  overflow-wrap:anywhere;
+}
+
+.hint-status{
+  justify-self:start;
+  border:1px solid var(--line-strong);
+  border-radius:999px;
+  padding:5px 10px;
+  color:var(--muted);
+  background:#fff;
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:.08em;
+}
+
+.hint-status.pending{
+  color:var(--amber);
+  border-color:rgba(217,119,6,.28);
+  background:rgba(217,119,6,.09);
+}
+
+.hint-status.approved{
+  color:var(--teal);
+  border-color:rgba(15,118,110,.28);
+  background:rgba(15,118,110,.09);
+}
+
+.hint-status.denied{
+  color:#be123c;
+  border-color:rgba(190,18,60,.28);
+  background:rgba(190,18,60,.09);
+}
+
+.hint-progress,
+.hint-response{
+  margin:0;
+  color:var(--muted);
+  font-weight:700;
+  line-height:1.55;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+
+.hint-actions{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  align-items:flex-start;
+}
+
+.hint-response-input{
+  flex:1 1 100%;
+  max-width:none;
+  resize:vertical;
+}
+
+.message-dialog{
+  width:min(640px, calc(100vw - 32px));
+  border:0;
+  border-radius:28px;
+  padding:0;
+  background:transparent;
+  color:var(--text);
+}
+
+.message-dialog::backdrop{
+  background:rgba(23,32,51,.42);
+  backdrop-filter:blur(8px);
+}
+
+.message-window{
+  border:1px solid rgba(255,255,255,.72);
+  border-radius:28px;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.98), rgba(248,251,255,.94)),
+    radial-gradient(520px 180px at 0% 0%, rgba(37,99,235,.12), transparent 70%);
+  box-shadow:0 28px 80px rgba(23,32,51,.26);
+  padding:24px;
+}
+
+.message-copy{
+  margin:14px 0 0;
+  color:var(--muted);
+  font-size:17px;
+  font-weight:800;
+  line-height:1.6;
+  white-space:pre-wrap;
+}
+
+.hint-request-form label span{
+  display:block;
+  margin:14px 0 8px;
+  color:var(--muted);
+  font-weight:800;
+  line-height:1.55;
+}
+
+.hint-request-textarea{
+  max-width:none;
+  resize:vertical;
+}

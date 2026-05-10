@@ -18,6 +18,7 @@ const PUZZLES = [
 const DATABASE_KEY = "puzzle_hunt_database_v1";
 const SESSION_KEY = "puzzle_hunt_current_user_v1";
 const ADMIN_ACCOUNT = { username: "easonadmin", password: "adminadmin" };
+const HINT_EMAIL = "easond29@lakesideschool.org";
 
 // -------------------------
 // Overlays (confetti + transition only)
@@ -138,6 +139,10 @@ function showNotification(message, type = "ok") {
 // -------------------------
 function defaultProgress() {
   return { unlockedUpTo: 1, solvedIds: [] };
+}
+
+function defaultHintRequests() {
+  return [];
 }
 
 function defaultDatabase() {
@@ -297,6 +302,7 @@ async function createAccount(username, password) {
     username: validation.username,
     passwordHash: await hashPassword(validation.username, validation.password),
     progress: defaultProgress(),
+    hintRequests: defaultHintRequests(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -375,6 +381,160 @@ function getLeaderboard() {
       if (b.solvedCount !== a.solvedCount) return b.solvedCount - a.solvedCount;
       return a.username.localeCompare(b.username);
     });
+}
+
+
+
+// -------------------------
+// Hint requests
+// -------------------------
+function getPuzzleById(puzzleId) {
+  return PUZZLES.find((p) => p.id === Number(puzzleId));
+}
+
+function sanitizeHintRequest(request) {
+  if (!request || typeof request !== "object") return null;
+
+  const puzzleId = Number(request.puzzleId);
+  const puzzle = getPuzzleById(puzzleId);
+  if (!puzzle) return null;
+
+  const status = ["pending", "approved", "denied"].includes(request.status)
+    ? request.status
+    : "pending";
+
+  return {
+    id: request.id || `hint-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    puzzleId,
+    puzzleTitle: request.puzzleTitle || puzzle.title,
+    progressText: (request.progressText ?? "").toString(),
+    status,
+    responseText: (request.responseText ?? "").toString(),
+    createdAt: request.createdAt || new Date().toISOString(),
+    decidedAt: request.decidedAt || "",
+    seenByUser: Boolean(request.seenByUser),
+  };
+}
+
+function getUserHintRequests(user) {
+  if (!user || !Array.isArray(user.hintRequests)) return defaultHintRequests();
+  return user.hintRequests.map(sanitizeHintRequest).filter(Boolean);
+}
+
+function saveHintRequest(username, request) {
+  const database = loadDatabase();
+  const key = usernameKey(username);
+  const user = database.users[key];
+  if (!user) return false;
+
+  user.hintRequests = getUserHintRequests(user);
+  user.hintRequests.push(request);
+  user.updatedAt = new Date().toISOString();
+  saveDatabase(database);
+  return true;
+}
+
+function buildHintEmail({ username, puzzle, progressText }) {
+  const subject = `${username} Hint Request for Puzzle ${puzzle.id}`;
+  const body = `Hi Eason,\n\nThe individual ${username} has requested a hint for Puzzle ${puzzle.id}, Titled ${puzzle.title}. Their progress so far: ${progressText}.\n\nPlease go to your admin account to address this request.`;
+
+  return {
+    subject,
+    body,
+    mailto: `mailto:${HINT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+  };
+}
+
+function requestHint(puzzleId, progressText) {
+  const username = getCurrentUsername();
+  const puzzle = getPuzzleById(puzzleId);
+  const cleanProgress = (progressText ?? "").toString().trim();
+
+  if (!username) return { ok: false, msg: "Log in before requesting a hint." };
+  if (isAdminUsername(username)) return { ok: false, msg: "Admin accounts cannot request hints." };
+  if (!puzzle) return { ok: false, msg: "Puzzle not found." };
+  if (!cleanProgress) return { ok: false, msg: "Please describe your thought process before sending." };
+
+  const email = buildHintEmail({ username, puzzle, progressText: cleanProgress });
+  const request = sanitizeHintRequest({
+    puzzleId: puzzle.id,
+    puzzleTitle: puzzle.title,
+    progressText: cleanProgress,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  });
+
+  if (!saveHintRequest(username, request)) {
+    return { ok: false, msg: "Unable to save this hint request. Please try again." };
+  }
+
+  window.location.href = email.mailto;
+  return { ok: true, msg: "Hint request saved. Your email app should open with the request ready to send." };
+}
+
+function updateHintRequest(username, requestId, changes) {
+  const database = loadDatabase();
+  const key = usernameKey(username);
+  const user = database.users[key];
+  if (!user) return { ok: false, msg: "That account no longer exists." };
+
+  const requests = getUserHintRequests(user);
+  const index = requests.findIndex((request) => request.id === requestId);
+  if (index < 0) return { ok: false, msg: "That hint request no longer exists." };
+
+  requests[index] = sanitizeHintRequest({ ...requests[index], ...changes }) || requests[index];
+  user.hintRequests = requests;
+  user.updatedAt = new Date().toISOString();
+  saveDatabase(database);
+  return { ok: true, msg: "Hint request updated." };
+}
+
+function denyHintRequest(username, requestId) {
+  return updateHintRequest(username, requestId, {
+    status: "denied",
+    responseText: "",
+    decidedAt: new Date().toISOString(),
+    seenByUser: false,
+  });
+}
+
+function approveHintRequest(username, requestId, responseText) {
+  const cleanResponse = (responseText ?? "").toString().trim();
+  if (!cleanResponse) return { ok: false, msg: "Write a personalized hint before sending." };
+
+  return updateHintRequest(username, requestId, {
+    status: "approved",
+    responseText: cleanResponse,
+    decidedAt: new Date().toISOString(),
+    seenByUser: false,
+  });
+}
+
+function getUnseenHintResponses() {
+  const username = getCurrentUsername();
+  if (!username || isAdminUsername(username)) return [];
+
+  const database = loadDatabase();
+  const user = database.users[usernameKey(username)];
+  return getUserHintRequests(user).filter((request) =>
+    !request.seenByUser && ["approved", "denied"].includes(request.status)
+  );
+}
+
+function markHintResponsesSeen(requestIds) {
+  const username = getCurrentUsername();
+  if (!username || !requestIds.length) return;
+
+  const database = loadDatabase();
+  const user = database.users[usernameKey(username)];
+  if (!user) return;
+
+  const idSet = new Set(requestIds);
+  user.hintRequests = getUserHintRequests(user).map((request) =>
+    idSet.has(request.id) ? { ...request, seenByUser: true } : request
+  );
+  user.updatedAt = new Date().toISOString();
+  saveDatabase(database);
 }
 
 function normalizeAnswer(s) {
@@ -484,6 +644,141 @@ function renderLeaderboard() {
   }
 }
 
+
+function openDialog(dialog) {
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
+}
+
+function closeDialog(dialog) {
+  if (typeof dialog.close === "function") {
+    dialog.close();
+  } else {
+    dialog.removeAttribute("open");
+  }
+}
+
+function showMessageDialog(title, message) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "message-dialog";
+  dialog.innerHTML = `
+    <div class="message-window">
+      <div class="leaderboard-window-header">
+        <div>
+          <p class="eyebrow">Hint response</p>
+          <h2></h2>
+        </div>
+        <button class="secondary icon-button" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="message-copy"></p>
+      <div class="row"><button type="button">OK</button></div>
+    </div>
+  `;
+  dialog.querySelector("h2").textContent = title;
+  dialog.querySelector(".message-copy").textContent = message;
+
+  const closeButtons = dialog.querySelectorAll("button");
+  closeButtons.forEach((button) => button.addEventListener("click", () => closeDialog(dialog)));
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog) closeDialog(dialog);
+  });
+  dialog.addEventListener("close", () => dialog.remove());
+
+  document.body.appendChild(dialog);
+  openDialog(dialog);
+}
+
+function showPendingHintResponses() {
+  const responses = getUnseenHintResponses();
+  if (!responses.length) return;
+
+  markHintResponsesSeen(responses.map((response) => response.id));
+  responses.forEach((response, index) => {
+    setTimeout(() => {
+      if (response.status === "denied") {
+        showMessageDialog(
+          `Your Hint Request for Puzzle ${response.puzzleId} Has been DENYED`,
+          `Your Hint Request for Puzzle ${response.puzzleId} Has been DENYED`
+        );
+      } else {
+        showMessageDialog(
+          `Your Hint Request for Puzzle ${response.puzzleId} has been APPROVED`,
+          response.responseText
+        );
+      }
+    }, index * 250);
+  });
+}
+
+function showHintRequestDialog(puzzleId) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "message-dialog";
+  dialog.innerHTML = `
+    <form class="message-window hint-request-form" method="dialog">
+      <div class="leaderboard-window-header">
+        <div>
+          <p class="eyebrow">Request a hint</p>
+          <h2>Hint request</h2>
+        </div>
+        <button class="secondary icon-button" value="cancel" type="button" aria-label="Close">×</button>
+      </div>
+      <label>
+        <span>please tell us your thought process on the puzzle so far so we can provide a personalized hint; remember that hint requests can be denied</span>
+        <textarea class="input hint-request-textarea" rows="7" required></textarea>
+      </label>
+      <p class="feedback" role="status" aria-live="polite"></p>
+      <div class="row">
+        <button type="submit">Send Hint Request</button>
+        <button class="secondary" type="button">Cancel</button>
+      </div>
+    </form>
+  `;
+
+  const form = dialog.querySelector("form");
+  const textarea = dialog.querySelector("textarea");
+  const feedback = dialog.querySelector(".feedback");
+  const closeButtons = dialog.querySelectorAll('button[type="button"]');
+
+  closeButtons.forEach((button) => button.addEventListener("click", () => closeDialog(dialog)));
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog) closeDialog(dialog);
+  });
+  dialog.addEventListener("close", () => dialog.remove());
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const res = requestHint(puzzleId, textarea.value);
+    if (!res.ok) {
+      setFeedback(feedback, false, res.msg);
+      return;
+    }
+
+    closeDialog(dialog);
+    showNotification(res.msg, "ok");
+  });
+
+  document.body.appendChild(dialog);
+  openDialog(dialog);
+  textarea.focus();
+}
+
+function bindHintRequestButton(puzzleId) {
+  const button = document.getElementById("requestHintBtn");
+  if (!button || button.dataset.bound) return;
+
+  button.dataset.bound = "true";
+  button.addEventListener("click", () => {
+    if (!getCurrentUsername()) {
+      showNotification("Log in before requesting a hint.", "info");
+      return;
+    }
+
+    showHintRequestDialog(puzzleId);
+  });
+}
+
 function openLeaderboardDialog(dialog) {
   renderLeaderboard();
   if (typeof dialog.showModal === "function") {
@@ -534,53 +829,132 @@ function setFeedback(element, ok, msg) {
 function renderAdminPanel() {
   const panel = document.getElementById("adminPanel");
   const list = document.getElementById("adminUserList");
+  const hintList = document.getElementById("adminHintList");
   const isAdmin = isCurrentUserAdmin();
 
   if (panel) panel.hidden = !isAdmin;
-  if (!list) return;
-
-  list.innerHTML = "";
+  if (list) list.innerHTML = "";
+  if (hintList) hintList.innerHTML = "";
   if (!isAdmin) return;
 
   const rows = getPlayerRows()
     .map((user) => ({
       ...user,
       progress: sanitizeProgress(user.progress),
+      hintRequests: getUserHintRequests(user),
     }))
     .sort((a, b) => a.username.localeCompare(b.username));
 
-  if (!rows.length) {
+  if (list) {
+    if (!rows.length) {
+      const empty = document.createElement("li");
+      empty.className = "admin-user-empty";
+      empty.textContent = "No player accounts exist yet.";
+      list.appendChild(empty);
+    } else {
+      for (const user of rows) {
+        const item = document.createElement("li");
+        item.className = "admin-user-row";
+
+        const summary = document.createElement("div");
+        summary.className = "admin-user-summary";
+
+        const name = document.createElement("strong");
+        name.textContent = user.username;
+
+        const details = document.createElement("span");
+        details.textContent = `${user.progress.solvedIds.length} / ${PUZZLES.length} solved`;
+
+        const button = document.createElement("button");
+        button.className = "danger";
+        button.type = "button";
+        button.textContent = "Delete account";
+        button.dataset.deleteUser = user.username;
+
+        summary.appendChild(name);
+        summary.appendChild(details);
+        item.appendChild(summary);
+        item.appendChild(button);
+        list.appendChild(item);
+      }
+    }
+  }
+
+  if (!hintList) return;
+
+  const requests = rows.flatMap((user) => user.hintRequests.map((request) => ({ ...request, username: user.username })));
+  requests.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+
+  if (!requests.length) {
     const empty = document.createElement("li");
     empty.className = "admin-user-empty";
-    empty.textContent = "No player accounts exist yet.";
-    list.appendChild(empty);
+    empty.textContent = "No hint requests have been submitted yet.";
+    hintList.appendChild(empty);
     return;
   }
 
-  for (const user of rows) {
+  for (const request of requests) {
     const item = document.createElement("li");
-    item.className = "admin-user-row";
+    item.className = "hint-request-row";
 
-    const summary = document.createElement("div");
-    summary.className = "admin-user-summary";
+    const title = document.createElement("strong");
+    title.textContent = `${request.username} — Puzzle ${request.puzzleId}: ${request.puzzleTitle}`;
 
-    const name = document.createElement("strong");
-    name.textContent = user.username;
+    const status = document.createElement("span");
+    status.className = `hint-status ${request.status}`;
+    status.textContent = request.status.toUpperCase();
 
-    const details = document.createElement("span");
-    details.textContent = `${user.progress.solvedIds.length} / ${PUZZLES.length} solved`;
+    const progress = document.createElement("p");
+    progress.className = "hint-progress";
+    progress.textContent = request.progressText;
 
-    const button = document.createElement("button");
-    button.className = "danger";
-    button.type = "button";
-    button.textContent = "Delete account";
-    button.dataset.deleteUser = user.username;
+    item.appendChild(title);
+    item.appendChild(status);
+    item.appendChild(progress);
 
-    summary.appendChild(name);
-    summary.appendChild(details);
-    item.appendChild(summary);
-    item.appendChild(button);
-    list.appendChild(item);
+    if (request.status === "pending") {
+      const actions = document.createElement("div");
+      actions.className = "hint-actions";
+
+      const approveBox = document.createElement("textarea");
+      approveBox.className = "input hint-response-input";
+      approveBox.rows = 3;
+      approveBox.placeholder = "Write a personalized hint...";
+      approveBox.hidden = true;
+      approveBox.dataset.hintResponseFor = request.id;
+
+      const approve = document.createElement("button");
+      approve.type = "button";
+      approve.textContent = "APPROVE";
+      approve.dataset.approveHint = request.id;
+
+      const send = document.createElement("button");
+      send.type = "button";
+      send.textContent = "SEND";
+      send.hidden = true;
+      send.dataset.sendHint = request.id;
+      send.dataset.hintUser = request.username;
+
+      const deny = document.createElement("button");
+      deny.className = "danger";
+      deny.type = "button";
+      deny.textContent = "DENY";
+      deny.dataset.denyHint = request.id;
+      deny.dataset.hintUser = request.username;
+
+      actions.appendChild(approveBox);
+      actions.appendChild(approve);
+      actions.appendChild(send);
+      actions.appendChild(deny);
+      item.appendChild(actions);
+    } else if (request.responseText) {
+      const response = document.createElement("p");
+      response.className = "hint-response";
+      response.textContent = `Response: ${request.responseText}`;
+      item.appendChild(response);
+    }
+
+    hintList.appendChild(item);
   }
 }
 
@@ -691,6 +1065,7 @@ function bindAuthControls() {
       if (passwordEl) passwordEl.value = "";
       renderIndex();
       showNotification(res.msg, "ok");
+      showPendingHintResponses();
     }
   }
 
@@ -740,6 +1115,45 @@ function bindAuthControls() {
       showNotification(res.msg, res.ok ? "ok" : "info");
     });
   }
+
+  const adminHintList = document.getElementById("adminHintList");
+  if (adminHintList && !adminHintList.dataset.bound) {
+    adminHintList.dataset.bound = "true";
+    adminHintList.addEventListener("click", (e) => {
+      if (!isCurrentUserAdmin()) return;
+
+      const approveButton = e.target.closest("[data-approve-hint]");
+      const sendButton = e.target.closest("[data-send-hint]");
+      const denyButton = e.target.closest("[data-deny-hint]");
+
+      if (approveButton) {
+        const requestId = approveButton.dataset.approveHint;
+        const responseBox = adminHintList.querySelector(`[data-hint-response-for="${CSS.escape(requestId)}"]`);
+        const sendButtonForRequest = adminHintList.querySelector(`[data-send-hint="${CSS.escape(requestId)}"]`);
+        if (responseBox) responseBox.hidden = false;
+        if (sendButtonForRequest) sendButtonForRequest.hidden = false;
+        approveButton.hidden = true;
+        responseBox?.focus();
+        return;
+      }
+
+      if (sendButton) {
+        const requestId = sendButton.dataset.sendHint;
+        const username = sendButton.dataset.hintUser;
+        const responseBox = adminHintList.querySelector(`[data-hint-response-for="${CSS.escape(requestId)}"]`);
+        const res = approveHintRequest(username, requestId, responseBox?.value ?? "");
+        renderIndex();
+        showNotification(res.msg, res.ok ? "ok" : "info");
+        return;
+      }
+
+      if (denyButton) {
+        const res = denyHintRequest(denyButton.dataset.hintUser, denyButton.dataset.denyHint);
+        renderIndex();
+        showNotification(res.msg, res.ok ? "ok" : "info");
+      }
+    });
+  }
 }
 
 // -------------------------
@@ -751,6 +1165,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindAuthControls();
   bindLeaderboardDialog();
   renderIndex();
+  showPendingHintResponses();
 });
 
 window.PuzzleHunt = {
@@ -759,4 +1174,5 @@ window.PuzzleHunt = {
   getPuzzleState,
   navigateWithTransition,
   spawnCelebrationConfetti,
+  bindHintRequestButton,
 };

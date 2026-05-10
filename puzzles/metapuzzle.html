@@ -34,6 +34,7 @@
       />
       <div class="row">
         <button id="submitBtn">Submit</button>
+        <button id="requestHintBtn" class="secondary" type="button">Request Hint</button>
       </div>
 
       <p id="feedback" class="feedback"></p>
@@ -45,6 +46,7 @@
     const puzzleId = 12;
 
     window.PuzzleHunt.requireUnlocked(puzzleId);
+    window.PuzzleHunt.bindHintRequestButton(puzzleId);
 
     const answerEl = document.getElementById("answer");
     const submitBtn = document.getElementById("submitBtn");
