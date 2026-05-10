@@ -56,20 +56,92 @@
       <div class="section-heading">
         <div>
           <p class="eyebrow">Admin tools</p>
-          <h2 id="adminTitle">User accounts</h2>
+          <h2 id="adminTitle">Control center</h2>
         </div>
-        <p class="muted">Review player accounts, time since each puzzle was first opened, and each hint request.</p>
+        <p class="muted">Open one admin window at a time so long histories stay out of the main page.</p>
       </div>
-      <div class="row admin-heading-actions">
-        <button id="postPublicHintBtn" type="button">Post Public Hint/Clarification</button>
+      <div class="admin-window-grid" aria-label="Admin tool windows">
+        <button id="openAdminHintsBtn" class="admin-window-card" type="button" aria-haspopup="dialog" aria-controls="adminHintsDialog">
+          <span class="admin-window-eyebrow">Requests</span>
+          <strong>Hint requests</strong>
+          <span id="adminHintCount">0 total</span>
+        </button>
+        <button id="openAdminPublicHintsBtn" class="admin-window-card" type="button" aria-haspopup="dialog" aria-controls="adminPublicHintsDialog">
+          <span class="admin-window-eyebrow">Broadcasts</span>
+          <strong>Public hints/clarifications</strong>
+          <span id="adminPublicHintCount">0 posted</span>
+        </button>
+        <button id="openAdminUsersBtn" class="admin-window-card" type="button" aria-haspopup="dialog" aria-controls="adminUsersDialog">
+          <span class="admin-window-eyebrow">Accounts</span>
+          <strong>Player accounts</strong>
+          <span id="adminUserCount">0 players</span>
+        </button>
+        <button id="openAdminPuzzlesBtn" class="admin-window-card" type="button" aria-haspopup="dialog" aria-controls="adminPuzzlesDialog">
+          <span class="admin-window-eyebrow">Puzzle board</span>
+          <strong>Available puzzles</strong>
+          <span id="adminPuzzleCount">0 puzzles</span>
+        </button>
       </div>
-      <h3>Public hints/clarifications</h3>
-      <ul id="adminPublicHintList" class="admin-user-list public-hint-list"></ul>
-      <h3>Hint requests</h3>
-      <ul id="adminHintList" class="admin-user-list hint-request-list"></ul>
-      <h3>Player accounts</h3>
-      <ul id="adminUserList" class="admin-user-list"></ul>
     </section>
+
+    <dialog id="adminHintsDialog" class="admin-dialog" aria-labelledby="adminHintsTitle">
+      <div class="admin-window">
+        <div class="admin-window-header">
+          <div>
+            <p class="eyebrow">Admin window</p>
+            <h2 id="adminHintsTitle">Hint requests</h2>
+          </div>
+          <button class="secondary icon-button" type="button" data-close-dialog="adminHintsDialog" aria-label="Close hint requests">×</button>
+        </div>
+        <p class="muted admin-window-copy">Review each request, approve it with a personalized hint, or deny it without leaving this window.</p>
+        <ul id="adminHintList" class="admin-user-list hint-request-list"></ul>
+      </div>
+    </dialog>
+
+    <dialog id="adminPublicHintsDialog" class="admin-dialog" aria-labelledby="adminPublicHintsTitle">
+      <div class="admin-window">
+        <div class="admin-window-header">
+          <div>
+            <p class="eyebrow">Admin window</p>
+            <h2 id="adminPublicHintsTitle">Public hints/clarifications</h2>
+          </div>
+          <button class="secondary icon-button" type="button" data-close-dialog="adminPublicHintsDialog" aria-label="Close public hints">×</button>
+        </div>
+        <p class="muted admin-window-copy">Post new public hints and review the existing broadcast history here.</p>
+        <div class="row admin-heading-actions">
+          <button id="postPublicHintBtn" type="button">Post Public Hint/Clarification</button>
+        </div>
+        <ul id="adminPublicHintList" class="admin-user-list public-hint-list"></ul>
+      </div>
+    </dialog>
+
+    <dialog id="adminUsersDialog" class="admin-dialog" aria-labelledby="adminUsersTitle">
+      <div class="admin-window">
+        <div class="admin-window-header">
+          <div>
+            <p class="eyebrow">Admin window</p>
+            <h2 id="adminUsersTitle">Player accounts</h2>
+          </div>
+          <button class="secondary icon-button" type="button" data-close-dialog="adminUsersDialog" aria-label="Close player accounts">×</button>
+        </div>
+        <p class="muted admin-window-copy">Inspect player progress, timing, and account controls without cluttering the main admin page.</p>
+        <ul id="adminUserList" class="admin-user-list"></ul>
+      </div>
+    </dialog>
+
+    <dialog id="adminPuzzlesDialog" class="admin-dialog admin-puzzles-dialog" aria-labelledby="adminPuzzlesTitle">
+      <div class="admin-window">
+        <div class="admin-window-header">
+          <div>
+            <p class="eyebrow">Admin window</p>
+            <h2 id="adminPuzzlesTitle">Available puzzles</h2>
+          </div>
+          <button class="secondary icon-button" type="button" data-close-dialog="adminPuzzlesDialog" aria-label="Close available puzzles">×</button>
+        </div>
+        <p class="muted admin-window-copy">All puzzles are available to admins for review from this separate window.</p>
+        <ul id="adminPuzzleList" class="gallery admin-puzzle-gallery"></ul>
+      </div>
+    </dialog>
 
     <section id="huntPanel" hidden>
       <div class="section-heading">

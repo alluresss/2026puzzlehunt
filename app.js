@@ -1218,17 +1218,63 @@ function setFeedback(element, ok, msg) {
   element.classList.add(ok ? "ok" : "bad");
 }
 
+function setText(id, text) {
+  const element = document.getElementById(id);
+  if (element) element.textContent = text;
+}
+
+function renderPuzzleCards(listEl, puzzles, solvedSet, isAdmin) {
+  if (!listEl) return;
+  listEl.innerHTML = "";
+
+  for (const p of puzzles) {
+    const solved = solvedSet.has(p.id);
+    const li = document.createElement("li");
+    li.className = "card" + (p.kind === "Meta" ? " card-meta-puzzle" : "");
+
+    const index = document.createElement("span");
+    index.className = "card-index";
+    index.textContent = p.kind === "Meta" ? "META" : String(p.id).padStart(2, "0");
+
+    const name = document.createElement("h3");
+    name.className = "puzzle-name";
+    name.textContent = p.title;
+
+    const label = document.createElement("p");
+    label.className = "card-label";
+    label.textContent = p.kind === "Meta" ? "Final metapuzzle" : "Main hunt puzzle";
+
+    const badge = document.createElement("span");
+    badge.className = "badge " + (solved ? "solved" : "unlocked");
+    badge.textContent = solved ? "Solved" : isAdmin ? "Admin" : "Available";
+
+    const open = document.createElement("a");
+    open.className = "button";
+    open.textContent = solved || isAdmin ? "Review" : "Open puzzle";
+    open.href = p.path;
+
+    li.appendChild(index);
+    li.appendChild(name);
+    li.appendChild(label);
+    li.appendChild(badge);
+    li.appendChild(open);
+    listEl.appendChild(li);
+  }
+}
+
 function renderAdminPanel() {
   const panel = document.getElementById("adminPanel");
   const list = document.getElementById("adminUserList");
   const hintList = document.getElementById("adminHintList");
   const publicHintList = document.getElementById("adminPublicHintList");
+  const adminPuzzleList = document.getElementById("adminPuzzleList");
   const isAdmin = isCurrentUserAdmin();
 
   if (panel) panel.hidden = !isAdmin;
   if (list) list.innerHTML = "";
   if (hintList) hintList.innerHTML = "";
   if (publicHintList) publicHintList.innerHTML = "";
+  if (adminPuzzleList) adminPuzzleList.innerHTML = "";
   if (!isAdmin) return;
 
   const rows = getPlayerRows()
@@ -1239,6 +1285,16 @@ function renderAdminPanel() {
       puzzleStats: sanitizePuzzleStats(user.puzzleStats),
     }))
     .sort((a, b) => a.username.localeCompare(b.username));
+  const publicHints = getPublicHints();
+  const requests = rows.flatMap((user) => user.hintRequests.map((request) => ({ ...request, username: user.username })));
+  requests.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  const pendingCount = requests.filter((request) => request.status === "pending").length;
+
+  setText("adminHintCount", `${pendingCount} pending · ${requests.length} total`);
+  setText("adminPublicHintCount", `${publicHints.length} posted`);
+  setText("adminUserCount", `${rows.length} player${rows.length === 1 ? "" : "s"}`);
+  setText("adminPuzzleCount", `${PUZZLES.length} puzzle${PUZZLES.length === 1 ? "" : "s"}`);
+  renderPuzzleCards(adminPuzzleList, PUZZLES, new Set(loadProgress().solvedIds), true);
 
   if (list) {
     if (!rows.length) {
@@ -1298,7 +1354,6 @@ function renderAdminPanel() {
   }
 
   if (publicHintList) {
-    const publicHints = getPublicHints();
     if (!publicHints.length) {
       const empty = document.createElement("li");
       empty.className = "admin-user-empty";
@@ -1329,9 +1384,6 @@ function renderAdminPanel() {
   }
 
   if (!hintList) return;
-
-  const requests = rows.flatMap((user) => user.hintRequests.map((request) => ({ ...request, username: user.username })));
-  requests.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
 
   if (!requests.length) {
     const empty = document.createElement("li");
@@ -1422,7 +1474,7 @@ function renderIndex() {
   renderAdminPanel();
 
   if (authPanel) authPanel.hidden = Boolean(username);
-  if (huntPanel) huntPanel.hidden = !username;
+  if (huntPanel) huntPanel.hidden = !username || isAdmin;
   if (logoutBtn) logoutBtn.hidden = !username;
   if (resetBtn) resetBtn.hidden = !username || isAdmin;
   if (accountEl) accountEl.textContent = username ? `Logged in as ${username}` : "Not logged in";
@@ -1454,41 +1506,7 @@ function renderIndex() {
         : "Every puzzle is solved. Congratulations!";
   }
 
-  listEl.innerHTML = "";
-
-  for (const p of visible) {
-    const solved = solvedSet.has(p.id);
-    const li = document.createElement("li");
-    li.className = "card" + (p.kind === "Meta" ? " card-meta-puzzle" : "");
-
-    const index = document.createElement("span");
-    index.className = "card-index";
-    index.textContent = p.kind === "Meta" ? "META" : String(p.id).padStart(2, "0");
-
-    const name = document.createElement("h3");
-    name.className = "puzzle-name";
-    name.textContent = p.title;
-
-    const label = document.createElement("p");
-    label.className = "card-label";
-    label.textContent = p.kind === "Meta" ? "Final metapuzzle" : "Main hunt puzzle";
-
-    const badge = document.createElement("span");
-    badge.className = "badge " + (solved ? "solved" : "unlocked");
-    badge.textContent = solved ? "Solved" : isAdmin ? "Admin" : "Available";
-
-    const open = document.createElement("a");
-    open.className = "button";
-    open.textContent = solved || isAdmin ? "Review" : "Open puzzle";
-    open.href = p.path;
-
-    li.appendChild(index);
-    li.appendChild(name);
-    li.appendChild(label);
-    li.appendChild(badge);
-    li.appendChild(open);
-    listEl.appendChild(li);
-  }
+  renderPuzzleCards(listEl, visible, solvedSet, isAdmin);
 }
 
 function showPublicHintDialog() {
@@ -1566,6 +1584,41 @@ function bindAdminPublicHintButton() {
   });
 }
 
+function bindAdminWindowControls() {
+  const windowButtons = [
+    ["openAdminHintsBtn", "adminHintsDialog"],
+    ["openAdminPublicHintsBtn", "adminPublicHintsDialog"],
+    ["openAdminUsersBtn", "adminUsersDialog"],
+    ["openAdminPuzzlesBtn", "adminPuzzlesDialog"],
+  ];
+
+  for (const [buttonId, dialogId] of windowButtons) {
+    const button = document.getElementById(buttonId);
+    const dialog = document.getElementById(dialogId);
+    if (!button || !dialog || button.dataset.bound) continue;
+
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => {
+      if (!isCurrentUserAdmin()) return;
+      renderAdminPanel();
+      openDialog(dialog);
+    });
+  }
+
+  document.querySelectorAll(".admin-dialog").forEach((dialog) => {
+    if (dialog.dataset.bound) return;
+    dialog.dataset.bound = "true";
+    dialog.addEventListener("click", (e) => {
+      const closeButton = e.target.closest("[data-close-dialog]");
+      if (closeButton) {
+        closeDialog(dialog);
+        return;
+      }
+      if (e.target === dialog) closeDialog(dialog);
+    });
+  });
+}
+
 function bindAuthControls() {
   const authForm = document.getElementById("authForm");
   const registerBtn = document.getElementById("registerBtn");
@@ -1576,6 +1629,7 @@ function bindAuthControls() {
   const feedbackEl = document.getElementById("authFeedback");
   const adminUserList = document.getElementById("adminUserList");
   bindAdminPublicHintButton();
+  bindAdminWindowControls();
 
   async function runAuth(action) {
     const username = usernameEl?.value ?? "";
