@@ -1,9 +1,9 @@
 // app.js — Puzzle Hunt logic with account-based progress, sequential unlocks, and celebrations.
 
 const PUZZLES = [
-  { id: 1, title: "The Red Fruit", path: "puzzles/puzzle1.html", answer: "APPLE", kind: "Puzzle" },
-  { id: 2, title: "Orange Identity", path: "puzzles/puzzle2.html", answer: "ORANGE", kind: "Puzzle" },
-  { id: 3, title: "Banana Business", path: "puzzles/puzzle3.html", answer: "BANANA", kind: "Puzzle" },
+  { id: 1, title: "Puzzle 1", path: "puzzles/puzzle1.html", answer: "APPLE", kind: "Puzzle" },
+  { id: 2, title: "Puzzle 2", path: "puzzles/puzzle2.html", answer: "ORANGE", kind: "Puzzle" },
+  { id: 3, title: "Puzzle 3", path: "puzzles/puzzle3.html", answer: "BANANA", kind: "Puzzle" },
   { id: 4, title: "Puzzle 4", path: "puzzles/puzzle4.html", answer: "PUZZLE4", kind: "Puzzle" },
   { id: 5, title: "Puzzle 5", path: "puzzles/puzzle5.html", answer: "PUZZLE5", kind: "Puzzle" },
   { id: 6, title: "Puzzle 6", path: "puzzles/puzzle6.html", answer: "PUZZLE6", kind: "Puzzle" },
@@ -12,7 +12,7 @@ const PUZZLES = [
   { id: 9, title: "Puzzle 9", path: "puzzles/puzzle9.html", answer: "PUZZLE9", kind: "Puzzle" },
   { id: 10, title: "Puzzle 10", path: "puzzles/puzzle10.html", answer: "PUZZLE10", kind: "Puzzle" },
   { id: 11, title: "Puzzle 11", path: "puzzles/puzzle11.html", answer: "PUZZLE11", kind: "Puzzle" },
-  { id: 12, title: "Metapuzzle", path: "puzzles/metapuzzle.html", answer: "META", kind: "Meta" },
+  { id: 12, title: "Puzzle 12", path: "puzzles/metapuzzle.html", answer: "META", kind: "Meta" },
 ];
 
 const DATABASE_KEY = "puzzle_hunt_database_v1";
