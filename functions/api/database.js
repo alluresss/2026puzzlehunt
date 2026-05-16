@@ -1,17 +1,113 @@
 const DATABASE_KEY = "database";
-const EMPTY_DATABASE = { version: 1, users: {}, publicHints: [] };
+const EMPTY_DATABASE = { version: 1, users: {}, publicHints: [], deletedUserKeys: [] };
+const PREFERRED_DATABASE_BINDINGS = [
+  "PUZZLE_HUNT_D1",
+  "PUZZLEHUNT_D1",
+  "PUZZLE_HUNT_DB",
+  "PUZZLEHUNT_DB",
+  "PUZZLE_HUNT_DATABASE",
+  "DATABASE",
+  "DB",
+  "D1",
+];
 const PREFERRED_KV_BINDINGS = ["PUZZLE_HUNT_KV", "PUZZLEHUNT_KV", "PUZZLE_HUNT_DATABASE", "DATABASE", "KV"];
+const PREFERRED_R2_BINDINGS = ["PUZZLE_HUNT_R2", "PUZZLEHUNT_R2", "PUZZLE_HUNT_BUCKET", "DATABASE_BUCKET", "BUCKET", "R2"];
+
+function isD1Database(binding) {
+  return Boolean(binding && typeof binding.prepare === "function");
+}
 
 function isKvNamespace(binding) {
   return Boolean(binding && typeof binding.get === "function" && typeof binding.put === "function");
 }
 
-function getDatabaseStore(env = {}) {
-  for (const name of PREFERRED_KV_BINDINGS) {
-    if (isKvNamespace(env[name])) return env[name];
+function isR2Bucket(binding) {
+  return Boolean(binding && typeof binding.get === "function" && typeof binding.put === "function" && typeof binding.head === "function");
+}
+
+function findBinding(env = {}, names, predicate) {
+  for (const name of names) {
+    if (predicate(env[name])) return env[name];
   }
 
-  return Object.values(env).find(isKvNamespace) || null;
+  return Object.values(env).find(predicate) || null;
+}
+
+function createKvDriver(store) {
+  return {
+    type: "KV",
+    async get() {
+      return cleanDatabase(await store.get(DATABASE_KEY, { type: "json" }) || EMPTY_DATABASE);
+    },
+    async put(database) {
+      await store.put(DATABASE_KEY, JSON.stringify(cleanDatabase(database)));
+      return cleanDatabase(await store.get(DATABASE_KEY, { type: "json" }) || database);
+    },
+  };
+}
+
+function createR2Driver(bucket) {
+  return {
+    type: "R2",
+    async get() {
+      const object = await bucket.get(`${DATABASE_KEY}.json`);
+      if (!object) return cleanDatabase(EMPTY_DATABASE);
+      return cleanDatabase(await object.json().catch(() => EMPTY_DATABASE));
+    },
+    async put(database) {
+      const clean = cleanDatabase(database);
+      await bucket.put(`${DATABASE_KEY}.json`, JSON.stringify(clean), {
+        httpMetadata: { contentType: "application/json; charset=utf-8" },
+      });
+      const confirmed = await bucket.get(`${DATABASE_KEY}.json`);
+      return cleanDatabase(confirmed ? await confirmed.json().catch(() => clean) : clean);
+    },
+  };
+}
+
+function createD1Driver(database) {
+  return {
+    type: "D1",
+    async get() {
+      await database.prepare(
+        "CREATE TABLE IF NOT EXISTS puzzle_hunt_database (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL)"
+      ).run();
+      const row = await database.prepare("SELECT data FROM puzzle_hunt_database WHERE id = ?")
+        .bind(DATABASE_KEY)
+        .first();
+      if (!row?.data) return cleanDatabase(EMPTY_DATABASE);
+      return cleanDatabase(JSON.parse(row.data || "null") || EMPTY_DATABASE);
+    },
+    async put(incomingDatabase) {
+      const clean = cleanDatabase(incomingDatabase);
+      await database.prepare(
+        "CREATE TABLE IF NOT EXISTS puzzle_hunt_database (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL)"
+      ).run();
+      await database.prepare(
+        "INSERT INTO puzzle_hunt_database (id, data, updated_at) VALUES (?, ?, ?) "
+        + "ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at"
+      )
+        .bind(DATABASE_KEY, JSON.stringify(clean), new Date().toISOString())
+        .run();
+      const row = await database.prepare("SELECT data FROM puzzle_hunt_database WHERE id = ?")
+        .bind(DATABASE_KEY)
+        .first();
+      return cleanDatabase(row?.data ? JSON.parse(row.data || "null") || clean : clean);
+    },
+  };
+}
+
+function getDatabaseDriver(env = {}) {
+  const d1 = findBinding(env, PREFERRED_DATABASE_BINDINGS, isD1Database);
+  if (d1) return createD1Driver(d1);
+
+  const kv = findBinding(env, PREFERRED_KV_BINDINGS, isKvNamespace);
+  if (kv) return createKvDriver(kv);
+
+  const r2 = findBinding(env, PREFERRED_R2_BINDINGS, isR2Bucket);
+  if (r2) return createR2Driver(r2);
+
+  return null;
 }
 
 function jsonResponse(body, init = {}) {
@@ -171,8 +267,11 @@ function mergeDatabases(localDatabase, incomingDatabase) {
     const incomingRevivesLocalDeletion = localDeleted.includes(cleanKey)
       && !incomingDeleted.includes(cleanKey)
       && isFreshAccountRecord(incoming.users[key]);
+    const localRevivesIncomingDeletion = incomingDeleted.includes(cleanKey)
+      && !localDeleted.includes(cleanKey)
+      && isFreshAccountRecord(local.users[key]);
 
-    if (incomingRevivesLocalDeletion) revivedKeys.add(cleanKey);
+    if (incomingRevivesLocalDeletion || localRevivesIncomingDeletion) revivedKeys.add(cleanKey);
   }
 
   const deletedUserKeys = Array.from(new Set([...localDeleted, ...incomingDeleted]))
@@ -198,17 +297,16 @@ export async function onRequest(context) {
 
   if (request.method === "OPTIONS") return jsonResponse({ ok: true });
 
-  const store = getDatabaseStore(env);
-  if (!store) {
+  const driver = getDatabaseDriver(env);
+  if (!driver) {
     return jsonResponse({
       ok: false,
-      error: "Missing writable Cloudflare KV binding for the puzzle hunt database. Add a KV namespace binding named PUZZLE_HUNT_KV so account creation can be saved.",
+      error: "Missing writable Cloudflare database binding. Bind a D1 database named PUZZLE_HUNT_D1 (preferred), or a KV namespace named PUZZLE_HUNT_KV, so account creation and progress can be shared across profiles.",
     }, { status: 503 });
   }
 
   if (request.method === "GET") {
-    const stored = await store.get(DATABASE_KEY, { type: "json" });
-    return jsonResponse(cleanDatabase(stored || EMPTY_DATABASE));
+    return jsonResponse(await driver.get(), { headers: { "X-Puzzle-Hunt-Store": driver.type } });
   }
 
   if (["PUT", "POST"].includes(request.method)) {
@@ -217,11 +315,10 @@ export async function onRequest(context) {
       return jsonResponse({ error: "Invalid database JSON" }, { status: 400 });
     }
 
-    const stored = await store.get(DATABASE_KEY, { type: "json" });
-    const merged = mergeDatabases(stored || EMPTY_DATABASE, database);
-    await store.put(DATABASE_KEY, JSON.stringify(merged));
-    const confirmed = await store.get(DATABASE_KEY, { type: "json" });
-    return jsonResponse(cleanDatabase(confirmed || merged));
+    const stored = await driver.get();
+    const merged = mergeDatabases(stored, database);
+    const confirmed = await driver.put(merged);
+    return jsonResponse(confirmed, { headers: { "X-Puzzle-Hunt-Store": driver.type } });
   }
 
   return jsonResponse({ error: "Method not allowed" }, { status: 405 });
