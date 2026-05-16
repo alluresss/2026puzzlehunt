@@ -57,7 +57,9 @@
       answerEl.value = state.answer;
       answerEl.disabled = true;
       submitBtn.disabled = true;
-      feedbackEl.textContent = `Solved ✅ Correct answer: ${state.answer}`;
+      feedbackEl.textContent = state.isAdmin
+        ? `Admin review ✅ Correct answer: ${state.answer}`
+        : `Solved ✅ Correct answer: ${state.answer}`;
       feedbackEl.classList.add("ok");
     }
 
