@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Puzzle Hunt</title>
   <link rel="stylesheet" href="style.css" />
+  <script>
+    // Set this to your account database endpoint to sync progress across devices.
+    window.PUZZLE_HUNT_SYNC_ENDPOINT = window.PUZZLE_HUNT_SYNC_ENDPOINT || "";
+  </script>
 </head>
 <body>
   <header class="hero">
@@ -32,7 +36,7 @@
       <div>
         <p class="eyebrow">Player account</p>
         <h2 id="authTitle">Log in to play</h2>
-        <p class="muted">Progress, solved puzzles, and leaderboard entries are stored by username in this browser.</p>
+        <p class="muted">Progress, solved puzzles, and leaderboard entries are stored by your puzzle hunt username and password, not by your Google account.</p>
       </div>
 
       <form id="authForm" class="auth-form">

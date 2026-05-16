@@ -42,6 +42,10 @@ const SEEDED_PLAYER_ACCOUNTS = [
 const HINT_EMAIL = "easond29@lakesideschool.org";
 const HINT_EMAIL_ENDPOINT = `https://formsubmit.co/ajax/${HINT_EMAIL}`;
 const SOLVE_NOTIFICATION_KEY = "puzzle_hunt_solve_notification_v1";
+const SYNC_ENDPOINT = (window.PUZZLE_HUNT_SYNC_ENDPOINT || "").toString().trim().replace(/\/+$/, "");
+let syncPushTimer = null;
+let syncInFlight = false;
+
 
 // -------------------------
 // Overlays (confetti only)
@@ -182,7 +186,7 @@ function loadDatabase() {
   }
 }
 
-function saveDatabase(database) {
+function saveDatabase(database, options = {}) {
   const users = database?.users && typeof database.users === "object" ? database.users : {};
   const cleanUsers = Object.fromEntries(
     Object.entries(users).map(([key, user]) => [
@@ -198,6 +202,225 @@ function saveDatabase(database) {
     publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
   };
   localStorage.setItem(DATABASE_KEY, JSON.stringify(cleanDatabase));
+  if (!options.skipRemote) queueRemoteDatabasePush();
+}
+
+function remoteDatabaseUrl() {
+  return SYNC_ENDPOINT ? `${SYNC_ENDPOINT}/database` : "";
+}
+
+function newerTimestamp(a, b) {
+  const aTime = Date.parse(a || "");
+  const bTime = Date.parse(b || "");
+  if (Number.isNaN(aTime) && Number.isNaN(bTime)) return "";
+  if (Number.isNaN(aTime)) return b || "";
+  if (Number.isNaN(bTime)) return a || "";
+  return aTime >= bTime ? (a || "") : (b || "");
+}
+
+function olderTimestamp(a, b) {
+  const aTime = Date.parse(a || "");
+  const bTime = Date.parse(b || "");
+  if (Number.isNaN(aTime) && Number.isNaN(bTime)) return "";
+  if (Number.isNaN(aTime)) return b || "";
+  if (Number.isNaN(bTime)) return a || "";
+  return aTime <= bTime ? (a || "") : (b || "");
+}
+
+function mergeProgress(localProgress, remoteProgress) {
+  const local = sanitizeProgress(localProgress);
+  const remote = sanitizeProgress(remoteProgress);
+  const solvedSet = new Set([...local.solvedIds, ...remote.solvedIds]);
+  const solvedAtById = {};
+
+  for (const puzzleId of solvedSet) {
+    const key = String(puzzleId);
+    solvedAtById[key] = olderTimestamp(local.solvedAtById[key], remote.solvedAtById[key])
+      || local.solvedAtById[key]
+      || remote.solvedAtById[key]
+      || new Date().toISOString();
+  }
+
+  return {
+    unlockedUpTo: Math.max(local.unlockedUpTo, remote.unlockedUpTo),
+    solvedIds: Array.from(solvedSet),
+    solvedAtById,
+  };
+}
+
+function mergeHintRequests(localRequests, remoteRequests) {
+  const byId = new Map();
+  [...(Array.isArray(localRequests) ? localRequests : []), ...(Array.isArray(remoteRequests) ? remoteRequests : [])]
+    .map(sanitizeHintRequest)
+    .filter(Boolean)
+    .forEach((request) => {
+      const existing = byId.get(request.id);
+      if (!existing) {
+        byId.set(request.id, request);
+        return;
+      }
+
+      const latestDecision = newerTimestamp(existing.decidedAt, request.decidedAt);
+      byId.set(request.id, {
+        ...existing,
+        ...request,
+        progressText: request.progressText || existing.progressText,
+        responseText: request.responseText || existing.responseText,
+        status: latestDecision === request.decidedAt ? request.status : existing.status,
+        createdAt: olderTimestamp(existing.createdAt, request.createdAt) || existing.createdAt || request.createdAt,
+        decidedAt: latestDecision,
+        seenByUser: existing.seenByUser && request.seenByUser,
+      });
+    });
+
+  return Array.from(byId.values()).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+}
+
+function mergePuzzleStats(localStats, remoteStats) {
+  const local = sanitizePuzzleStats(localStats);
+  const remote = sanitizePuzzleStats(remoteStats);
+  const ids = new Set([...Object.keys(local), ...Object.keys(remote)]);
+
+  return Object.fromEntries(Array.from(ids).map((id) => {
+    const localStat = local[id] || {};
+    const remoteStat = remote[id] || {};
+    const puzzle = getPuzzleById(id);
+    return [id, {
+      puzzleId: Number(id),
+      puzzleTitle: localStat.puzzleTitle || remoteStat.puzzleTitle || puzzle?.title || `Puzzle ${id}`,
+      firstOpenedAt: olderTimestamp(localStat.firstOpenedAt, remoteStat.firstOpenedAt),
+      lastOpenedAt: newerTimestamp(localStat.lastOpenedAt, remoteStat.lastOpenedAt),
+    }];
+  }));
+}
+
+function mergeUserRecords(localUser, remoteUser) {
+  if (!localUser) return remoteUser;
+  if (!remoteUser) return localUser;
+
+  const localUpdated = Date.parse(localUser.updatedAt || "");
+  const remoteUpdated = Date.parse(remoteUser.updatedAt || "");
+  const remoteIsNewer = !Number.isNaN(remoteUpdated) && (Number.isNaN(localUpdated) || remoteUpdated > localUpdated);
+  const preferred = remoteIsNewer ? remoteUser : localUser;
+  const fallback = remoteIsNewer ? localUser : remoteUser;
+
+  return {
+    ...fallback,
+    ...preferred,
+    username: preferred.username || fallback.username,
+    passwordHash: preferred.passwordHash || fallback.passwordHash || "",
+    isAdmin: Boolean(preferred.isAdmin || fallback.isAdmin),
+    hiddenFromLeaderboard: Boolean(preferred.hiddenFromLeaderboard || fallback.hiddenFromLeaderboard),
+    progress: mergeProgress(localUser.progress, remoteUser.progress),
+    hintRequests: mergeHintRequests(localUser.hintRequests, remoteUser.hintRequests),
+    puzzleStats: mergePuzzleStats(localUser.puzzleStats, remoteUser.puzzleStats),
+    createdAt: olderTimestamp(localUser.createdAt, remoteUser.createdAt) || preferred.createdAt || fallback.createdAt,
+    updatedAt: newerTimestamp(localUser.updatedAt, remoteUser.updatedAt) || preferred.updatedAt || fallback.updatedAt,
+  };
+}
+
+function mergePublicHints(localHints, remoteHints) {
+  const byId = new Map();
+  [...(Array.isArray(localHints) ? localHints : []), ...(Array.isArray(remoteHints) ? remoteHints : [])]
+    .map(sanitizePublicHint)
+    .filter(Boolean)
+    .forEach((hint) => {
+      const existing = byId.get(hint.id);
+      if (!existing) {
+        byId.set(hint.id, hint);
+        return;
+      }
+
+      byId.set(hint.id, {
+        ...existing,
+        ...hint,
+        seenBy: Array.from(new Set([...(existing.seenBy || []), ...(hint.seenBy || [])])),
+        createdAt: olderTimestamp(existing.createdAt, hint.createdAt) || existing.createdAt || hint.createdAt,
+      });
+    });
+
+  return Array.from(byId.values()).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+}
+
+function mergeDatabases(localDatabase, remoteDatabase) {
+  const local = localDatabase && typeof localDatabase === "object" ? localDatabase : defaultDatabase();
+  const remote = remoteDatabase && typeof remoteDatabase === "object" ? remoteDatabase : defaultDatabase();
+  const users = {};
+  const keys = new Set([...Object.keys(local.users || {}), ...Object.keys(remote.users || {})]);
+
+  for (const key of keys) {
+    users[key] = mergeUserRecords(local.users?.[key], remote.users?.[key]);
+  }
+
+  return {
+    version: 1,
+    users,
+    publicHints: mergePublicHints(local.publicHints, remote.publicHints),
+  };
+}
+
+async function fetchRemoteDatabase() {
+  const url = remoteDatabaseUrl();
+  if (!url) return null;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+
+  if (response.status === 404) return defaultDatabase();
+  if (!response.ok) throw new Error(`Sync fetch failed: ${response.status}`);
+
+  const data = await response.json();
+  return data && typeof data === "object" ? data : defaultDatabase();
+}
+
+async function pushRemoteDatabase(database = loadDatabase()) {
+  const url = remoteDatabaseUrl();
+  if (!url || syncInFlight) return false;
+
+  syncInFlight = true;
+  try {
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(database),
+      keepalive: true,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    syncInFlight = false;
+  }
+}
+
+function queueRemoteDatabasePush() {
+  if (!remoteDatabaseUrl()) return;
+  clearTimeout(syncPushTimer);
+  syncPushTimer = setTimeout(() => {
+    pushRemoteDatabase();
+  }, 350);
+}
+
+async function syncDatabaseFromRemote() {
+  if (!remoteDatabaseUrl()) return false;
+
+  try {
+    const remote = await fetchRemoteDatabase();
+    if (!remote) return false;
+
+    const merged = mergeDatabases(loadDatabase(), remote);
+    saveDatabase(merged, { skipRemote: true });
+    await pushRemoteDatabase(merged);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeUsername(username) {
@@ -381,6 +604,8 @@ function saveProgress(progress) {
 }
 
 async function createAccount(username, password) {
+  await syncDatabaseFromRemote();
+
   const validation = validateCredentials(username, password);
   if (!validation.ok) return validation;
   if (isAdminUsername(validation.username)) {
@@ -458,6 +683,8 @@ async function ensureSeededPlayerAccount(account) {
 }
 
 async function login(username, password) {
+  await syncDatabaseFromRemote();
+
   const validation = validateCredentials(username, password);
   if (!validation.ok) return validation;
 
@@ -2006,7 +2233,10 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-window.addEventListener("beforeunload", flushPuzzleTimer);
+window.addEventListener("beforeunload", () => {
+  flushPuzzleTimer();
+  if (remoteDatabaseUrl()) pushRemoteDatabase();
+});
 
 window.addEventListener("storage", (event) => {
   if (event.key !== DATABASE_KEY) return;
@@ -2023,6 +2253,12 @@ document.addEventListener("DOMContentLoaded", () => {
   bindAuthControls();
   bindLeaderboardDialog();
   renderIndex();
+  syncDatabaseFromRemote().then((synced) => {
+    if (!synced) return;
+    renderIndex();
+    const puzzleId = Number(document.body.dataset.puzzleId);
+    if (puzzleId) renderPuzzleHintPanel(puzzleId);
+  });
   showQueuedSolveNotification();
   showPendingHintResponses();
   showPendingPublicHints();
@@ -2050,4 +2286,5 @@ window.PuzzleHunt = {
   spawnCelebrationConfetti,
   bindHintRequestButton,
   renderPuzzleHintPanel,
+  syncDatabaseFromRemote,
 };
