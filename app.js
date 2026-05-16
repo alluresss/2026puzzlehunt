@@ -50,6 +50,7 @@ const SYNC_ENDPOINT = (window.PUZZLE_HUNT_SYNC_ENDPOINT || DEFAULT_SYNC_ENDPOINT
 const REMOTE_SYNC_INTERVAL_MS = 15000;
 let syncPushTimer = null;
 let syncInFlight = false;
+let activeRemotePushPromise = null;
 let initialRemoteSyncPromise = null;
 let pendingRemotePushPromise = null;
 
@@ -394,34 +395,44 @@ async function fetchRemoteDatabase() {
 
 async function pushRemoteDatabase(database = loadDatabase(), options = {}) {
   const url = remoteDatabaseUrl();
-  if (!url || syncInFlight) return false;
+  if (!url) return false;
+
+  if (syncInFlight && activeRemotePushPromise) {
+    await activeRemotePushPromise.catch(() => false);
+    return pushRemoteDatabase(loadDatabase(), options);
+  }
 
   syncInFlight = true;
-  try {
-    const payload = options.mergeRemote === false
-      ? database
-      : mergeDatabases(await fetchRemoteDatabase().catch(() => defaultDatabase()), database);
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(payload),
-      keepalive: true,
-    });
+  activeRemotePushPromise = (async () => {
+    try {
+      const payload = options.mergeRemote === false
+        ? database
+        : mergeDatabases(await fetchRemoteDatabase().catch(() => defaultDatabase()), database);
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      });
 
-    if (response.ok) {
-      const savedDatabase = await response.json().catch(() => payload);
-      saveDatabase(savedDatabase && typeof savedDatabase === "object" ? savedDatabase : payload, { skipRemote: true });
+      if (response.ok) {
+        const savedDatabase = await response.json().catch(() => payload);
+        saveDatabase(savedDatabase && typeof savedDatabase === "object" ? savedDatabase : payload, { skipRemote: true });
+      }
+
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      syncInFlight = false;
+      activeRemotePushPromise = null;
     }
+  })();
 
-    return response.ok;
-  } catch {
-    return false;
-  } finally {
-    syncInFlight = false;
-  }
+  return activeRemotePushPromise;
 }
 
 function queueRemoteDatabasePush() {
@@ -669,7 +680,10 @@ function saveProgress(progress) {
 }
 
 async function createAccount(username, password) {
-  await syncDatabaseFromRemote();
+  const synced = await ensureRemoteDatabaseSyncedOnce();
+  if (remoteDatabaseUrl() && !synced) {
+    return { ok: false, msg: "Could not reach the shared account database. Please try again before creating an account." };
+  }
 
   const validation = validateCredentials(username, password);
   if (!validation.ok) return validation;
@@ -702,7 +716,14 @@ async function createAccount(username, password) {
   };
 
   saveDatabase(database);
-  await flushRemoteDatabasePush(database);
+  const savedRemotely = await flushRemoteDatabasePush(database);
+  if (remoteDatabaseUrl() && !savedRemotely) {
+    const latestDatabase = loadDatabase();
+    delete latestDatabase.users[key];
+    saveDatabase(latestDatabase, { skipRemote: true });
+    return { ok: false, msg: "Account creation could not be saved to the shared database. Please try again." };
+  }
+
   setCurrentUsername(validation.username);
   return { ok: true, msg: `Welcome, ${validation.username}! Your account is ready.` };
 }
@@ -755,7 +776,7 @@ async function ensureSeededPlayerAccount(account) {
 }
 
 async function login(username, password) {
-  await syncDatabaseFromRemote();
+  const synced = await ensureRemoteDatabaseSyncedOnce();
 
   const validation = validateCredentials(username, password);
   if (!validation.ok) return validation;
@@ -779,7 +800,12 @@ async function login(username, password) {
 
   const database = loadDatabase();
   const user = database.users[usernameKey(validation.username)];
-  if (!user) return { ok: false, msg: "No account found for that username." };
+  if (!user) {
+    if (remoteDatabaseUrl() && !synced) {
+      return { ok: false, msg: "Could not reach the shared account database. Please try again before logging in." };
+    }
+    return { ok: false, msg: "No account found for that username." };
+  }
 
   const passwordHash = await hashPassword(validation.username, validation.password);
   if (passwordHash !== user.passwordHash) return { ok: false, msg: "Incorrect password." };
