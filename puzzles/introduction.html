@@ -93,7 +93,9 @@
       });
 
       setTimeout(() => {
-        window.PuzzleHunt.navigateWithoutTransition("../index.html");
+        Promise.resolve(res.syncPromise).finally(() => {
+          window.PuzzleHunt.navigateWithoutTransition("../index.html");
+        });
       }, 900);
     }
 
