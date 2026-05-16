@@ -152,16 +152,33 @@ function mergePublicHints(localHints, incomingHints) {
   }));
 }
 
+function isFreshAccountRecord(user) {
+  if (!user || typeof user !== "object") return false;
+  if (!user.createdAt || !user.updatedAt) return false;
+  return Math.abs(Date.parse(user.createdAt) - Date.parse(user.updatedAt)) <= 1000;
+}
+
 function mergeDatabases(localDatabase, incomingDatabase) {
   const local = cleanDatabase(localDatabase);
   const incoming = cleanDatabase(incomingDatabase);
-  const deletedUserKeys = Array.from(new Set([
-    ...local.deletedUserKeys,
-    ...incoming.deletedUserKeys,
-  ].map((key) => key?.toString().trim().toLowerCase()).filter(Boolean)));
+  const localDeleted = local.deletedUserKeys.map((key) => key?.toString().trim().toLowerCase()).filter(Boolean);
+  const incomingDeleted = incoming.deletedUserKeys.map((key) => key?.toString().trim().toLowerCase()).filter(Boolean);
+  const keys = new Set([...Object.keys(local.users), ...Object.keys(incoming.users)]);
+  const revivedKeys = new Set();
+
+  for (const key of keys) {
+    const cleanKey = key.toString().trim().toLowerCase();
+    const incomingRevivesLocalDeletion = localDeleted.includes(cleanKey)
+      && !incomingDeleted.includes(cleanKey)
+      && isFreshAccountRecord(incoming.users[key]);
+
+    if (incomingRevivesLocalDeletion) revivedKeys.add(cleanKey);
+  }
+
+  const deletedUserKeys = Array.from(new Set([...localDeleted, ...incomingDeleted]))
+    .filter((key) => !revivedKeys.has(key));
   const deletedSet = new Set(deletedUserKeys);
   const users = {};
-  const keys = new Set([...Object.keys(local.users), ...Object.keys(incoming.users)]);
 
   for (const key of keys) {
     if (deletedSet.has(key.toString().trim().toLowerCase())) continue;
@@ -183,7 +200,10 @@ export async function onRequest(context) {
 
   const store = getDatabaseStore(env);
   if (!store) {
-    return jsonResponse({ error: "Missing writable Cloudflare KV binding for the puzzle hunt database" }, { status: 503 });
+    return jsonResponse({
+      ok: false,
+      error: "Missing writable Cloudflare KV binding for the puzzle hunt database. Add a KV namespace binding named PUZZLE_HUNT_KV so account creation can be saved.",
+    }, { status: 503 });
   }
 
   if (request.method === "GET") {
@@ -200,7 +220,8 @@ export async function onRequest(context) {
     const stored = await store.get(DATABASE_KEY, { type: "json" });
     const merged = mergeDatabases(stored || EMPTY_DATABASE, database);
     await store.put(DATABASE_KEY, JSON.stringify(merged));
-    return jsonResponse(merged);
+    const confirmed = await store.get(DATABASE_KEY, { type: "json" });
+    return jsonResponse(cleanDatabase(confirmed || merged));
   }
 
   return jsonResponse({ error: "Method not allowed" }, { status: 405 });
