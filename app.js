@@ -32,7 +32,7 @@ const SESSION_KEY = "puzzle_hunt_current_user_v1";
 const ADMIN_ACCOUNT = { username: "easonadmin", password: "adminadmin" };
 const SEEDED_PLAYER_ACCOUNTS = [
   {
-    username: "eason test",
+    username: "EASONEASON",
     password: "adminadmin",
     hiddenFromLeaderboard: true,
     unlockAllPuzzles: true,
