@@ -233,6 +233,17 @@ button:disabled, a.button[aria-disabled="true"]{
   border-color:rgba(217,119,6,.30);
 }
 
+
+.card-introduction-puzzle{
+  border-color:rgba(20,184,166,.32);
+}
+
+.card-introduction-puzzle::before{
+  background:
+    linear-gradient(90deg, rgba(20,184,166,.16), transparent 40%),
+    radial-gradient(480px 160px at 100% 0%, rgba(37,99,235,.12), transparent 65%);
+}
+
 .card-meta-puzzle::before{
   background:
     linear-gradient(90deg, rgba(217,119,6,.16), transparent 40%),
@@ -376,6 +387,12 @@ button:disabled, a.button[aria-disabled="true"]{
   100% { transform:translateX(0); }
 }
 .shake { animation:shake 360ms ease; }
+
+.no-hints-note{
+  margin:12px 0 0;
+  font-size:14px;
+  font-weight:700;
+}
 
 /* =========================
    Celebration confetti

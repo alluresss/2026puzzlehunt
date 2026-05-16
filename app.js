@@ -1,6 +1,15 @@
 // app.js — Puzzle Hunt logic with account-based progress, sequential unlocks, and celebrations.
 
-const PUZZLES = [
+const INTRODUCTION_PUZZLE = {
+  id: 0,
+  title: "Introduction",
+  path: "puzzles/introduction.html",
+  answer: "SOLVED",
+  kind: "Introduction",
+  allowHints: false,
+};
+
+const HUNT_PUZZLES = [
   { id: 1, title: "Puzzle 1", path: "puzzles/puzzle1.html", answer: "APPLE", kind: "Puzzle" },
   { id: 2, title: "Puzzle 2", path: "puzzles/puzzle2.html", answer: "ORANGE", kind: "Puzzle" },
   { id: 3, title: "Puzzle 3", path: "puzzles/puzzle3.html", answer: "BANANA", kind: "Puzzle" },
@@ -14,6 +23,9 @@ const PUZZLES = [
   { id: 11, title: "Puzzle 11", path: "puzzles/puzzle11.html", answer: "PUZZLE11", kind: "Puzzle" },
   { id: 12, title: "Puzzle 12", path: "puzzles/metapuzzle.html", answer: "META", kind: "Meta" },
 ];
+
+const PUZZLES = [INTRODUCTION_PUZZLE, ...HUNT_PUZZLES];
+const MAX_PUZZLE_ID = Math.max(...PUZZLES.map((puzzle) => puzzle.id));
 
 const DATABASE_KEY = "puzzle_hunt_database_v1";
 const SESSION_KEY = "puzzle_hunt_current_user_v1";
@@ -139,7 +151,7 @@ function showNotification(message, type = "ok") {
 // Account database helpers
 // -------------------------
 function defaultProgress() {
-  return { unlockedUpTo: 1, solvedIds: [] };
+  return { unlockedUpTo: 0, solvedIds: [] };
 }
 
 function defaultHintRequests() {
@@ -270,16 +282,16 @@ function sanitizeProgress(progress) {
   const unlockedUpTo = Number(progress.unlockedUpTo);
   const solvedIds = Array.isArray(progress.solvedIds) ? progress.solvedIds : [];
 
-  if (!Number.isFinite(unlockedUpTo) || unlockedUpTo < 1) return fallback;
+  if (!Number.isFinite(unlockedUpTo) || unlockedUpTo < 0) return fallback;
 
   const solvedSet = new Set(
     solvedIds
       .map(Number)
-      .filter((n) => Number.isFinite(n) && n >= 1 && n <= PUZZLES.length)
+      .filter((n) => Number.isFinite(n) && n >= 0 && n <= MAX_PUZZLE_ID)
   );
 
   return {
-    unlockedUpTo: Math.min(unlockedUpTo, PUZZLES.length + 1),
+    unlockedUpTo: Math.min(unlockedUpTo, MAX_PUZZLE_ID + 1),
     solvedIds: Array.from(solvedSet),
   };
 }
@@ -287,7 +299,7 @@ function sanitizeProgress(progress) {
 function loadProgress() {
   const username = getCurrentUsername();
   if (!username) return defaultProgress();
-  if (isAdminUsername(username)) return { unlockedUpTo: PUZZLES.length, solvedIds: [] };
+  if (isAdminUsername(username)) return { unlockedUpTo: MAX_PUZZLE_ID, solvedIds: [] };
 
   const database = loadDatabase();
   const user = database.users[usernameKey(username)];
@@ -449,7 +461,7 @@ function getLeaderboard() {
       const progress = sanitizeProgress(user.progress);
       return {
         username: user.username,
-        solvedCount: progress.solvedIds.length,
+        solvedCount: progress.solvedIds.filter((id) => id !== INTRODUCTION_PUZZLE.id).length,
         updatedAt: user.updatedAt || user.createdAt || "",
       };
     })
@@ -573,6 +585,7 @@ function requestHint(puzzleId, progressText) {
   if (!username) return { ok: false, msg: "Log in before requesting a hint." };
   if (isAdminUsername(username)) return { ok: false, msg: "Admin accounts cannot request hints." };
   if (!puzzle) return { ok: false, msg: "Puzzle not found." };
+  if (puzzle.allowHints === false) return { ok: false, msg: "Hint requests are not available for the introduction." };
   if (!cleanProgress) return { ok: false, msg: "Please describe your thought process before sending." };
 
   const existingToday = getTodaysHintRequest();
@@ -769,6 +782,10 @@ function isSolved(puzzleId) {
   return loadProgress().solvedIds.includes(puzzleId);
 }
 
+function hasCompletedIntroduction(progress = loadProgress()) {
+  return sanitizeProgress(progress).solvedIds.includes(INTRODUCTION_PUZZLE.id);
+}
+
 // -------------------------
 // Puzzle first-open tracking
 // -------------------------
@@ -851,7 +868,12 @@ function requireUnlocked(puzzleId) {
     return;
   }
 
-  const { unlockedUpTo } = loadProgress();
+  const progress = loadProgress();
+  const { unlockedUpTo } = progress;
+  if (puzzleId !== INTRODUCTION_PUZZLE.id && !hasCompletedIntroduction(progress)) {
+    navigateWithTransition("introduction.html");
+    return;
+  }
   if (puzzleId > unlockedUpTo) {
     navigateWithTransition("../index.html");
     return;
@@ -884,10 +906,11 @@ function submitAnswer(puzzleId, inputValue) {
     progress.unlockedUpTo = Math.max(progress.unlockedUpTo, puzzleId + 1);
     saveProgress(progress);
 
-    const isLast = puzzleId === PUZZLES[PUZZLES.length - 1].id;
+    const isIntroduction = puzzleId === INTRODUCTION_PUZZLE.id;
+    const isLast = puzzleId === HUNT_PUZZLES[HUNT_PUZZLES.length - 1].id;
     return {
       ok: true,
-      msg: isLast ? "Correct! Hunt complete ✨" : "Correct! Next puzzle unlocked ✨",
+      msg: isIntroduction ? "Correct! Introduction complete ✨" : isLast ? "Correct! Hunt complete ✨" : "Correct! Next puzzle unlocked ✨",
       redirectHome: true,
     };
   }
@@ -936,7 +959,7 @@ function renderLeaderboard() {
 
     const score = document.createElement("span");
     score.className = "leaderboard-score";
-    score.textContent = `${player.solvedCount} / ${PUZZLES.length} solved`;
+    score.textContent = `${player.solvedCount} / ${HUNT_PUZZLES.length} hunt puzzles solved`;
 
     item.appendChild(name);
     item.appendChild(score);
@@ -1230,11 +1253,11 @@ function renderPuzzleCards(listEl, puzzles, solvedSet, isAdmin) {
   for (const p of puzzles) {
     const solved = solvedSet.has(p.id);
     const li = document.createElement("li");
-    li.className = "card" + (p.kind === "Meta" ? " card-meta-puzzle" : "");
+    li.className = "card" + (p.kind === "Meta" ? " card-meta-puzzle" : p.kind === "Introduction" ? " card-introduction-puzzle" : "");
 
     const index = document.createElement("span");
     index.className = "card-index";
-    index.textContent = p.kind === "Meta" ? "META" : String(p.id).padStart(2, "0");
+    index.textContent = p.kind === "Meta" ? "META" : p.kind === "Introduction" ? "START" : String(p.id).padStart(2, "0");
 
     const name = document.createElement("h3");
     name.className = "puzzle-name";
@@ -1242,7 +1265,7 @@ function renderPuzzleCards(listEl, puzzles, solvedSet, isAdmin) {
 
     const label = document.createElement("p");
     label.className = "card-label";
-    label.textContent = p.kind === "Meta" ? "Final metapuzzle" : "Main hunt puzzle";
+    label.textContent = p.kind === "Meta" ? "Final metapuzzle" : p.kind === "Introduction" ? "Required onboarding puzzle" : "Main hunt puzzle";
 
     const badge = document.createElement("span");
     badge.className = "badge " + (solved ? "solved" : "unlocked");
@@ -1293,7 +1316,7 @@ function renderAdminPanel() {
   setText("adminHintCount", `${pendingCount} pending · ${requests.length} total`);
   setText("adminPublicHintCount", `${publicHints.length} posted`);
   setText("adminUserCount", `${rows.length} player${rows.length === 1 ? "" : "s"}`);
-  setText("adminPuzzleCount", `${PUZZLES.length} puzzle${PUZZLES.length === 1 ? "" : "s"}`);
+  setText("adminPuzzleCount", `${PUZZLES.length} pages (${HUNT_PUZZLES.length} hunt puzzles + introduction)`);
   renderPuzzleCards(adminPuzzleList, PUZZLES, new Set(loadProgress().solvedIds), true);
 
   if (list) {
@@ -1314,7 +1337,7 @@ function renderAdminPanel() {
         name.textContent = user.username;
 
         const details = document.createElement("span");
-        details.textContent = `${user.progress.solvedIds.length} / ${PUZZLES.length} solved`;
+        details.textContent = `${user.progress.solvedIds.filter((id) => id !== INTRODUCTION_PUZZLE.id).length} / ${HUNT_PUZZLES.length} hunt puzzles solved`;
 
         const currentPuzzle = document.createElement("span");
         currentPuzzle.className = "admin-current-puzzle";
@@ -1488,22 +1511,35 @@ function renderIndex() {
 
   if (!listEl) return;
 
-  const { unlockedUpTo, solvedIds } = loadProgress();
+  const progress = loadProgress();
+  const { unlockedUpTo, solvedIds } = progress;
   const solvedSet = new Set(solvedIds);
-  const visible = isAdmin ? PUZZLES : PUZZLES.filter((p) => p.id <= unlockedUpTo);
-  const nextPuzzle = PUZZLES.find((p) => !solvedSet.has(p.id));
+  const introComplete = hasCompletedIntroduction(progress);
+  const visible = isAdmin
+    ? PUZZLES
+    : introComplete
+      ? [INTRODUCTION_PUZZLE, ...HUNT_PUZZLES.filter((p) => p.id <= unlockedUpTo)]
+      : [INTRODUCTION_PUZZLE];
+  const nextPuzzle = introComplete
+    ? HUNT_PUZZLES.find((p) => !solvedSet.has(p.id))
+    : INTRODUCTION_PUZZLE;
+  const solvedHuntCount = HUNT_PUZZLES.filter((p) => solvedSet.has(p.id)).length;
 
   if (progressEl) {
     progressEl.textContent = isAdmin
-      ? `Admin access: ${PUZZLES.length} puzzles visible`
-      : `${solvedSet.size} of ${PUZZLES.length} solved`;
+      ? `Admin access: ${PUZZLES.length} pages visible`
+      : introComplete
+        ? `${solvedHuntCount} of ${HUNT_PUZZLES.length} hunt puzzles solved`
+        : "Complete the introduction to unlock the puzzle board";
   }
   if (revealEl) {
     revealEl.textContent = isAdmin
       ? "All puzzles are available for review, and admin tools are enabled."
-      : nextPuzzle
-        ? `${nextPuzzle.kind === "Meta" ? "The metapuzzle" : nextPuzzle.title} is available now.`
-        : "Every puzzle is solved. Congratulations!";
+      : !introComplete
+        ? "Open the introduction, enter its answer, and then the hunt puzzles will unlock."
+        : nextPuzzle
+          ? `${nextPuzzle.kind === "Meta" ? "The metapuzzle" : nextPuzzle.title} is available now.`
+          : "Every hunt puzzle is solved. Congratulations!";
   }
 
   renderPuzzleCards(listEl, visible, solvedSet, isAdmin);
@@ -1543,7 +1579,7 @@ function showPublicHintDialog() {
   const feedback = dialog.querySelector(".feedback");
   const closeButtons = dialog.querySelectorAll('button[type="button"]');
 
-  for (const puzzle of PUZZLES) {
+  for (const puzzle of PUZZLES.filter((puzzle) => puzzle.allowHints !== false)) {
     const option = document.createElement("option");
     option.value = puzzle.id;
     option.textContent = `${puzzle.kind === "Meta" ? "Metapuzzle" : `Puzzle ${puzzle.id}`} — ${puzzle.title}`;
@@ -1643,6 +1679,10 @@ function bindAuthControls() {
       if (passwordEl) passwordEl.value = "";
       renderIndex();
       showNotification(res.msg, "ok");
+      if (action === "register" && !isCurrentUserAdmin()) {
+        setTimeout(() => navigateWithTransition(INTRODUCTION_PUZZLE.path), 550);
+        return;
+      }
       showPendingHintResponses();
       showPendingPublicHints();
     }
