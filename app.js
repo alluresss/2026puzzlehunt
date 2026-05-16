@@ -48,6 +48,12 @@ const SOLVE_NOTIFICATION_KEY = "puzzle_hunt_solve_notification_v1";
 const DEFAULT_SYNC_ENDPOINT = "/api";
 const SYNC_ENDPOINT = (window.PUZZLE_HUNT_SYNC_ENDPOINT || DEFAULT_SYNC_ENDPOINT).toString().trim().replace(/\/+$/, "");
 const REMOTE_SYNC_INTERVAL_MS = 15000;
+// Keep user data in the shared cloud backend. localStorage is only a browser cache
+// so a different Google/Chrome profile can still access the same accounts, progress,
+// hint history, admin state, and leaderboard data after the cloud sync succeeds.
+const CLOUD_DATABASE_REQUIRED = window.PUZZLE_HUNT_REQUIRE_CLOUD_DATABASE !== false;
+let lastRemoteSyncOk = false;
+let lastRemoteSyncAt = "";
 let syncPushTimer = null;
 let syncInFlight = false;
 let activeRemotePushPromise = null;
@@ -217,6 +223,37 @@ function saveDatabase(database, options = {}) {
 
 function remoteDatabaseUrl() {
   return SYNC_ENDPOINT ? `${SYNC_ENDPOINT}/database` : "";
+}
+
+function cloudDatabaseStatus() {
+  if (!remoteDatabaseUrl()) {
+    return {
+      configured: false,
+      required: CLOUD_DATABASE_REQUIRED,
+      ready: !CLOUD_DATABASE_REQUIRED,
+      lastSyncedAt: lastRemoteSyncAt,
+    };
+  }
+
+  return {
+    configured: true,
+    required: CLOUD_DATABASE_REQUIRED,
+    ready: !CLOUD_DATABASE_REQUIRED || lastRemoteSyncOk,
+    lastSyncedAt: lastRemoteSyncAt,
+  };
+}
+
+function cloudUnavailableMessage(action = "continue") {
+  if (!remoteDatabaseUrl()) {
+    return `The shared cloud database is not configured, so ${action} is disabled to prevent saving account data only in this browser.`;
+  }
+
+  return `Could not reach the shared cloud database, so ${action} is disabled to prevent saving account data only in this browser. Please refresh and try again.`;
+}
+
+function canUseCachedDatabaseForWrites() {
+  const status = cloudDatabaseStatus();
+  return status.ready;
 }
 
 function newerTimestamp(a, b) {
@@ -419,12 +456,17 @@ async function pushRemoteDatabase(database = loadDatabase(), options = {}) {
       });
 
       if (response.ok) {
+        lastRemoteSyncOk = true;
+        lastRemoteSyncAt = new Date().toISOString();
         const savedDatabase = await response.json().catch(() => payload);
         saveDatabase(savedDatabase && typeof savedDatabase === "object" ? savedDatabase : payload, { skipRemote: true });
+      } else {
+        lastRemoteSyncOk = false;
       }
 
       return response.ok;
     } catch {
+      lastRemoteSyncOk = false;
       return false;
     } finally {
       syncInFlight = false;
@@ -492,9 +534,12 @@ async function syncDatabaseFromRemote() {
 
     const merged = mergeDatabases(loadDatabase(), remote);
     saveDatabase(merged, { skipRemote: true });
-    await pushRemoteDatabase(merged, { mergeRemote: false });
-    return true;
+    const pushed = await pushRemoteDatabase(merged, { mergeRemote: false });
+    lastRemoteSyncOk = Boolean(pushed);
+    if (pushed) lastRemoteSyncAt = new Date().toISOString();
+    return Boolean(pushed);
   } catch {
+    lastRemoteSyncOk = false;
     return false;
   }
 }
@@ -651,6 +696,7 @@ function loadProgress() {
 function saveProgress(progress) {
   const username = getCurrentUsername();
   if (!username) return false;
+  if (!canUseCachedDatabaseForWrites()) return false;
 
   const database = loadDatabase();
   const key = usernameKey(username);
@@ -681,6 +727,9 @@ function saveProgress(progress) {
 
 async function createAccount(username, password) {
   const synced = await ensureRemoteDatabaseSyncedOnce();
+  if (CLOUD_DATABASE_REQUIRED && !synced) {
+    return { ok: false, msg: cloudUnavailableMessage("creating accounts") };
+  }
   if (remoteDatabaseUrl() && !synced) {
     return { ok: false, msg: "Could not reach the shared account database. Please try again before creating an account." };
   }
@@ -778,6 +827,10 @@ async function ensureSeededPlayerAccount(account) {
 async function login(username, password) {
   const synced = await ensureRemoteDatabaseSyncedOnce();
 
+  if (CLOUD_DATABASE_REQUIRED && !synced) {
+    return { ok: false, msg: cloudUnavailableMessage("logging in") };
+  }
+
   const validation = validateCredentials(username, password);
   if (!validation.ok) return validation;
 
@@ -825,6 +878,7 @@ function resetCurrentProgress() {
 }
 
 function deleteUserAccount(username) {
+  if (!canUseCachedDatabaseForWrites()) return { ok: false, msg: cloudUnavailableMessage("deleting accounts") };
   if (isAdminUsername(username)) return { ok: false, msg: "The admin account cannot be deleted." };
 
   const database = loadDatabase();
@@ -979,6 +1033,7 @@ function getUserHintRequests(user) {
 }
 
 function saveHintRequest(username, request) {
+  if (!canUseCachedDatabaseForWrites()) return false;
   const database = loadDatabase();
   const key = usernameKey(username);
   const user = database.users[key];
@@ -1079,6 +1134,7 @@ function requestHint(puzzleId, progressText) {
 }
 
 function updateHintRequest(username, requestId, changes) {
+  if (!canUseCachedDatabaseForWrites()) return { ok: false, msg: cloudUnavailableMessage("updating hint requests") };
   const database = loadDatabase();
   const key = usernameKey(username);
   const user = database.users[key];
@@ -1129,7 +1185,7 @@ function getUnseenHintResponses() {
 
 function markHintResponsesSeen(requestIds) {
   const username = getCurrentUsername();
-  if (!username || !requestIds.length) return;
+  if (!username || !requestIds.length || !canUseCachedDatabaseForWrites()) return;
 
   const database = loadDatabase();
   const user = database.users[usernameKey(username)];
@@ -1179,6 +1235,7 @@ function getPublicHintsForPuzzle(puzzleId) {
 }
 
 function revokePublicHint(hintId) {
+  if (!canUseCachedDatabaseForWrites()) return { ok: false, msg: cloudUnavailableMessage("revoking public hints") };
   if (!isCurrentUserAdmin()) return { ok: false, msg: "Only admins can revoke public hints." };
 
   const database = loadDatabase();
@@ -1203,6 +1260,7 @@ function revokePublicHint(hintId) {
 }
 
 function postPublicHint(puzzleId, content) {
+  if (!canUseCachedDatabaseForWrites()) return { ok: false, msg: cloudUnavailableMessage("posting public hints") };
   if (!isCurrentUserAdmin()) return { ok: false, msg: "Only admins can post public hints." };
 
   const puzzle = getPuzzleById(puzzleId);
@@ -1405,6 +1463,9 @@ function requireUnlocked(puzzleId, options = {}) {
 
 function submitAnswer(puzzleId, inputValue) {
   const username = getCurrentUsername();
+  if (!canUseCachedDatabaseForWrites()) {
+    return { ok: false, msg: cloudUnavailableMessage("submitting answers") };
+  }
   if (!username) {
     return { ok: false, msg: "Log in before submitting answers." };
   }
@@ -1433,7 +1494,9 @@ function submitAnswer(puzzleId, inputValue) {
       [String(puzzleId)]: new Date().toISOString(),
     };
     progress.unlockedUpTo = Math.max(progress.unlockedUpTo, puzzleId + 1);
-    saveProgress(progress);
+    if (!saveProgress(progress)) {
+      return { ok: false, msg: cloudUnavailableMessage("submitting answers") };
+    }
     const syncPromise = flushRemoteDatabasePush();
 
     const isIntroduction = puzzleId === INTRODUCTION_PUZZLE.id;
@@ -2371,16 +2434,21 @@ document.addEventListener("DOMContentLoaded", () => {
   ensureOverlays();
   bindAuthControls();
   bindLeaderboardDialog();
-  renderIndex();
+
+  if (CLOUD_DATABASE_REQUIRED) showSyncGate("Loading shared cloud database…");
+
   ensureRemoteDatabaseSyncedOnce().then((synced) => {
-    if (!synced) return;
+    hideSyncGate();
+    if (!synced && CLOUD_DATABASE_REQUIRED) {
+      showNotification(cloudUnavailableMessage("account actions"), "info");
+    }
     renderIndex();
     const puzzleId = Number(document.body.dataset.puzzleId);
     if (puzzleId) renderPuzzleHintPanel(puzzleId);
+    showQueuedSolveNotification();
+    showPendingHintResponses();
+    showPendingPublicHints();
   });
-  showQueuedSolveNotification();
-  showPendingHintResponses();
-  showPendingPublicHints();
 
   if (document.getElementById("adminPanel")) {
     setInterval(() => {
@@ -2417,4 +2485,5 @@ window.PuzzleHunt = {
   bindHintRequestButton,
   renderPuzzleHintPanel,
   syncDatabaseFromRemote,
+  cloudDatabaseStatus,
 };
