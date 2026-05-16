@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Introduction</title>
+  <link rel="stylesheet" href="../style.css" />
+</head>
+<body>
+  <main class="container page-shell">
+    <a class="button secondary" href="../index.html">← Back to Puzzle Board</a>
+
+    <h1 class="page-title">Introduction</h1>
+    <p class="page-subtitle">Please read the introductory document embedded below. You can also access the document <a href="https://docs.google.com/document/d/1UXJUg4vvoEn0Gw0qIQBzd4i0Pw66qvfPK3obaf2uxn8/preview?tab=t.0" target="_blank" rel="noopener">here</a>. Submit the answer from this page to unlock the puzzle board.</p>
+
+    <div class="embed-wrap">
+      <iframe
+        class="doc-embed"
+        src="https://docs.google.com/document/d/1UXJUg4vvoEn0Gw0qIQBzd4i0Pw66qvfPK3obaf2uxn8/preview?tab=t.0"
+        loading="lazy"
+        referrerpolicy="no-referrer"
+      ></iframe>
+    </div>
+
+    <section class="answer-section">
+      <label for="answer"><strong>Submit answer</strong></label><br />
+      <input
+        id="answer"
+        class="input"
+        placeholder="Type your answer..."
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <div class="row">
+        <button id="submitBtn">Submit</button>
+      </div>
+      <p class="muted no-hints-note">Hint requests are not available for the introduction.</p>
+      <p id="feedback" class="feedback"></p>
+    </section>
+  </main>
+
+  <script src="../app.js"></script>
+  <script>
+    const puzzleId = 0;
+
+    window.PuzzleHunt.requireUnlocked(puzzleId);
+
+    const answerEl = document.getElementById("answer");
+    const submitBtn = document.getElementById("submitBtn");
+    const feedbackEl = document.getElementById("feedback");
+
+    const state = window.PuzzleHunt.getPuzzleState(puzzleId);
+    if (state.solved) {
+      answerEl.value = state.answer;
+      answerEl.disabled = true;
+      submitBtn.disabled = true;
+      feedbackEl.textContent = `Solved ✅ Correct answer: ${state.answer}`;
+      feedbackEl.classList.add("ok");
+    }
+
+    function setFeedback(ok, msg) {
+      feedbackEl.textContent = msg;
+      feedbackEl.classList.remove("ok", "bad");
+      feedbackEl.classList.add(ok ? "ok" : "bad");
+    }
+
+    function shakeInput() {
+      answerEl.classList.remove("shake");
+      void answerEl.offsetWidth;
+      answerEl.classList.add("shake");
+    }
+
+    function doSubmit() {
+      if (window.PuzzleHunt.getPuzzleState(puzzleId).solved) return;
+
+      submitBtn.disabled = true;
+
+      const res = window.PuzzleHunt.submitAnswer(puzzleId, answerEl.value);
+      setFeedback(res.ok, res.msg);
+
+      if (!res.ok) {
+        shakeInput();
+        submitBtn.disabled = false;
+        return;
+      }
+
+      const rect = submitBtn.getBoundingClientRect();
+      window.PuzzleHunt.spawnCelebrationConfetti({
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      });
+
+      setTimeout(() => {
+        window.PuzzleHunt.navigateWithTransition("../index.html");
+      }, 900);
+    }
+
+    submitBtn.addEventListener("click", doSubmit);
+    answerEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doSubmit();
+    });
+  </script>
+</body>
+</html>
