@@ -460,13 +460,13 @@ async function pushRemoteDatabase(database = loadDatabase(), options = {}) {
         lastRemoteSyncAt = new Date().toISOString();
         const savedDatabase = await response.json().catch(() => payload);
         saveDatabase(savedDatabase && typeof savedDatabase === "object" ? savedDatabase : payload, { skipRemote: true });
-      } else {
+      } else if (options.markReachabilityOnFailure !== false) {
         lastRemoteSyncOk = false;
       }
 
       return response.ok;
     } catch {
-      lastRemoteSyncOk = false;
+      if (options.markReachabilityOnFailure !== false) lastRemoteSyncOk = false;
       return false;
     } finally {
       syncInFlight = false;
@@ -534,10 +534,16 @@ async function syncDatabaseFromRemote() {
 
     const merged = mergeDatabases(loadDatabase(), remote);
     saveDatabase(merged, { skipRemote: true });
-    const pushed = await pushRemoteDatabase(merged, { mergeRemote: false });
-    lastRemoteSyncOk = Boolean(pushed);
-    if (pushed) lastRemoteSyncAt = new Date().toISOString();
-    return Boolean(pushed);
+
+    // A successful read proves the shared database is reachable.  Do not block
+    // login/account access on this opportunistic write-back; later explicit
+    // account/progress writes will perform their own remote save attempts and
+    // can mark the cloud unavailable if those saves fail.
+    lastRemoteSyncOk = true;
+    lastRemoteSyncAt = new Date().toISOString();
+
+    await pushRemoteDatabase(merged, { mergeRemote: false, markReachabilityOnFailure: false });
+    return true;
   } catch {
     lastRemoteSyncOk = false;
     return false;
