@@ -35,9 +35,10 @@ const SEEDED_PLAYER_ACCOUNTS = [
 ];
 const HINT_EMAIL = "easond29@lakesideschool.org";
 const HINT_EMAIL_ENDPOINT = `https://formsubmit.co/ajax/${HINT_EMAIL}`;
+const SOLVE_NOTIFICATION_KEY = "puzzle_hunt_solve_notification_v1";
 
 // -------------------------
-// Overlays (confetti + transition only)
+// Overlays (confetti only)
 // -------------------------
 function ensureOverlays() {
   if (!document.getElementById("confettiLayer")) {
@@ -45,36 +46,10 @@ function ensureOverlays() {
     c.id = "confettiLayer";
     document.body.appendChild(c);
   }
-  if (!document.getElementById("pageTransition")) {
-    const t = document.createElement("div");
-    t.id = "pageTransition";
-    document.body.appendChild(t);
-  }
 }
 
-function navigateWithTransition(href) {
-  ensureOverlays();
-  document.body.classList.add("pt-out");
-  setTimeout(() => {
-    window.location.href = href;
-  }, 420);
-}
-
-// Intercept same-site links for smooth transitions.
-function enableLinkTransitions() {
-  document.addEventListener("click", (e) => {
-    const a = e.target.closest("a");
-    if (!a || !a.href) return;
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    if (a.target && a.target !== "_self") return;
-    if (a.getAttribute("aria-disabled") === "true") return;
-
-    const url = new URL(a.href, window.location.href);
-    if (url.origin !== window.location.origin) return;
-
-    e.preventDefault();
-    navigateWithTransition(url.href);
-  });
+function navigateWithoutTransition(href) {
+  window.location.href = href;
 }
 
 // -------------------------
@@ -148,6 +123,18 @@ function showNotification(message, type = "ok") {
     note.classList.remove("is-visible");
     setTimeout(() => note.remove(), 220);
   }, 3600);
+}
+
+function queueSolveNotification(message) {
+  sessionStorage.setItem(SOLVE_NOTIFICATION_KEY, message);
+}
+
+function showQueuedSolveNotification() {
+  const message = sessionStorage.getItem(SOLVE_NOTIFICATION_KEY);
+  if (!message) return;
+
+  sessionStorage.removeItem(SOLVE_NOTIFICATION_KEY);
+  showNotification(message, "ok");
 }
 
 // -------------------------
@@ -821,7 +808,13 @@ function getUnseenPublicHints() {
   if (!username || isAdminUsername(username)) return [];
 
   const key = usernameKey(username);
-  return getPublicHints().filter((hint) => !hint.seenBy.includes(key));
+  const progress = loadProgress();
+  const introComplete = hasCompletedIntroduction(progress);
+  return getPublicHints().filter((hint) => {
+    const reachedPuzzle = hint.puzzleId === INTRODUCTION_PUZZLE.id
+      || (introComplete && hint.puzzleId <= progress.unlockedUpTo);
+    return reachedPuzzle && !hint.seenBy.includes(key);
+  });
 }
 
 function markPublicHintsSeen(hintIds) {
@@ -947,18 +940,18 @@ function formatMinutesSince(value) {
 // -------------------------
 function requireUnlocked(puzzleId) {
   if (!getCurrentUsername()) {
-    navigateWithTransition("../index.html");
+    navigateWithoutTransition("../index.html");
     return;
   }
 
   const progress = loadProgress();
   const { unlockedUpTo } = progress;
   if (puzzleId !== INTRODUCTION_PUZZLE.id && !hasCompletedIntroduction(progress)) {
-    navigateWithTransition("introduction.html");
+    navigateWithoutTransition("introduction.html");
     return;
   }
   if (puzzleId > unlockedUpTo) {
-    navigateWithTransition("../index.html");
+    navigateWithoutTransition("../index.html");
     return;
   }
 
@@ -995,9 +988,15 @@ function submitAnswer(puzzleId, inputValue) {
 
     const isIntroduction = puzzleId === INTRODUCTION_PUZZLE.id;
     const isLast = puzzleId === HUNT_PUZZLES[HUNT_PUZZLES.length - 1].id;
+    const msg = isLast
+      ? "Correct! Hunt complete ✨"
+      : isIntroduction
+        ? "Correct! Puzzle 1 is unlocked ✨"
+        : "Correct! The next puzzle is unlocked ✨";
+    queueSolveNotification(msg);
     return {
       ok: true,
-      msg: isIntroduction ? "Correct! Introduction complete ✨" : isLast ? "Correct! Hunt complete ✨" : "Correct! Next puzzle unlocked ✨",
+      msg,
       redirectHome: true,
     };
   }
@@ -1767,7 +1766,7 @@ function bindAuthControls() {
       renderIndex();
       showNotification(res.msg, "ok");
       if (action === "register" && !isCurrentUserAdmin()) {
-        setTimeout(() => navigateWithTransition(INTRODUCTION_PUZZLE.path), 550);
+        setTimeout(() => navigateWithoutTransition(INTRODUCTION_PUZZLE.path), 550);
         return;
       }
       showPendingHintResponses();
@@ -1877,6 +1876,7 @@ window.addEventListener("beforeunload", flushPuzzleTimer);
 
 window.addEventListener("storage", (event) => {
   if (event.key !== DATABASE_KEY) return;
+  showQueuedSolveNotification();
   showPendingHintResponses();
   showPendingPublicHints();
   const puzzleId = Number(document.body.dataset.puzzleId);
@@ -1886,10 +1886,10 @@ window.addEventListener("storage", (event) => {
 
 document.addEventListener("DOMContentLoaded", () => {
   ensureOverlays();
-  enableLinkTransitions();
   bindAuthControls();
   bindLeaderboardDialog();
   renderIndex();
+  showQueuedSolveNotification();
   showPendingHintResponses();
   showPendingPublicHints();
 
@@ -1912,7 +1912,7 @@ window.PuzzleHunt = {
   requireUnlocked,
   submitAnswer,
   getPuzzleState,
-  navigateWithTransition,
+  navigateWithoutTransition,
   spawnCelebrationConfetti,
   bindHintRequestButton,
   renderPuzzleHintPanel,
