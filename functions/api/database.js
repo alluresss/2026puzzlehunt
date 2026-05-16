@@ -1,5 +1,6 @@
 const DATABASE_KEY = "database";
-const EMPTY_DATABASE = { version: 1, users: {}, publicHints: [], deletedUserKeys: [] };
+const RETIRED_SEEDED_PLAYER_USER_KEYS = ["easoneason"];
+const EMPTY_DATABASE = { version: 1, users: {}, publicHints: [], deletedUserKeys: [...RETIRED_SEEDED_PLAYER_USER_KEYS] };
 const PREFERRED_DATABASE_BINDINGS = [
   "PUZZLE_HUNT_D1",
   "PUZZLEHUNT_D1",
@@ -123,14 +124,28 @@ function jsonResponse(body, init = {}) {
   });
 }
 
+function userKey(value) {
+  return value?.toString().trim().toLowerCase() || "";
+}
+
 function cleanDatabase(database) {
+  const retiredKeys = new Set(RETIRED_SEEDED_PLAYER_USER_KEYS);
+  const sourceUsers = database?.users && typeof database.users === "object" ? database.users : {};
+  const users = {};
+
+  for (const [key, user] of Object.entries(sourceUsers)) {
+    if (retiredKeys.has(userKey(key)) || retiredKeys.has(userKey(user?.username))) continue;
+    users[key] = user;
+  }
+
   return {
     version: 1,
-    users: database?.users && typeof database.users === "object" ? database.users : {},
+    users,
     publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
-    deletedUserKeys: Array.isArray(database?.deletedUserKeys)
-      ? database.deletedUserKeys.map((key) => key?.toString().trim().toLowerCase()).filter(Boolean)
-      : [],
+    deletedUserKeys: Array.from(new Set([
+      ...(Array.isArray(database?.deletedUserKeys) ? database.deletedUserKeys : []),
+      ...RETIRED_SEEDED_PLAYER_USER_KEYS,
+    ].map(userKey).filter(Boolean))),
   };
 }
 
@@ -263,7 +278,7 @@ function mergeDatabases(localDatabase, incomingDatabase) {
   const revivedKeys = new Set();
 
   for (const key of keys) {
-    const cleanKey = key.toString().trim().toLowerCase();
+    const cleanKey = userKey(key);
     const incomingRevivesLocalDeletion = localDeleted.includes(cleanKey)
       && !incomingDeleted.includes(cleanKey)
       && isFreshAccountRecord(incoming.users[key]);
@@ -280,7 +295,7 @@ function mergeDatabases(localDatabase, incomingDatabase) {
   const users = {};
 
   for (const key of keys) {
-    if (deletedSet.has(key.toString().trim().toLowerCase())) continue;
+    if (deletedSet.has(userKey(key))) continue;
     users[key] = mergeUser(local.users[key], incoming.users[key]);
   }
 
