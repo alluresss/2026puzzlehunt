@@ -6,7 +6,8 @@
   <title>Puzzle Hunt</title>
   <link rel="stylesheet" href="style.css" />
   <script>
-    // Set this to your account database endpoint to sync progress across devices.
+    // Optional runtime override; app.js also has DEFAULT_SYNC_ENDPOINT so every puzzle
+    // page can use the same shared account/progress database.
     window.PUZZLE_HUNT_SYNC_ENDPOINT = window.PUZZLE_HUNT_SYNC_ENDPOINT || "";
   </script>
 </head>
@@ -36,7 +37,7 @@
       <div>
         <p class="eyebrow">Player account</p>
         <h2 id="authTitle">Log in to play</h2>
-        <p class="muted">Progress, solved puzzles, and leaderboard entries are stored by your puzzle hunt username and password, not by your Google account.</p>
+        <p class="muted">Progress, solved puzzles, and leaderboard entries are stored in the shared hunt database under your puzzle hunt username and password, not under your Google account.</p>
       </div>
 
       <form id="authForm" class="auth-form">
