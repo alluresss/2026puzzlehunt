@@ -479,7 +479,6 @@ async function pushRemoteDatabase(database = loadDatabase(), options = {}) {
           Accept: "application/json",
         },
         body: JSON.stringify(payload),
-        keepalive: true,
       });
 
       if (response.ok) {
@@ -1500,7 +1499,7 @@ function requireUnlocked(puzzleId, options = {}) {
   startPuzzleTimer(puzzleId);
 }
 
-function submitAnswer(puzzleId, inputValue) {
+async function submitAnswer(puzzleId, inputValue) {
   const username = getCurrentUsername();
   if (!canUseCachedDatabaseForWrites()) {
     return { ok: false, msg: cloudUnavailableMessage("submitting answers") };
@@ -1523,6 +1522,7 @@ function submitAnswer(puzzleId, inputValue) {
   if (!guess) return { ok: false, msg: "Type an answer first." };
 
   if (guess === normalizeAnswer(puzzle.answer)) {
+    const databaseBeforeSave = loadDatabase();
     const progress = loadProgress();
     const solved = new Set(progress.solvedIds);
     solved.add(puzzleId);
@@ -1536,7 +1536,12 @@ function submitAnswer(puzzleId, inputValue) {
     if (!saveProgress(progress)) {
       return { ok: false, msg: cloudUnavailableMessage("submitting answers") };
     }
-    const syncPromise = flushRemoteDatabasePush();
+
+    const savedRemotely = remoteDatabaseUrl() ? await flushRemoteDatabasePush() : true;
+    if (remoteDatabaseUrl() && CLOUD_DATABASE_REQUIRED && !savedRemotely) {
+      saveDatabase(databaseBeforeSave, { skipRemote: true });
+      return { ok: false, msg: cloudUnavailableMessage("submitting answers") };
+    }
 
     const isIntroduction = puzzleId === INTRODUCTION_PUZZLE.id;
     const isLast = puzzleId === HUNT_PUZZLES[HUNT_PUZZLES.length - 1].id;
@@ -1550,7 +1555,7 @@ function submitAnswer(puzzleId, inputValue) {
       ok: true,
       msg,
       redirectHome: true,
-      syncPromise,
+      syncPromise: Promise.resolve(savedRemotely),
     };
   }
 

@@ -75,12 +75,12 @@
       answerEl.classList.add("shake");
     }
 
-    function doSubmit() {
+    async function doSubmit() {
       if (window.PuzzleHunt.getPuzzleState(puzzleId).solved) return;
 
       submitBtn.disabled = true;
 
-      const res = window.PuzzleHunt.submitAnswer(puzzleId, answerEl.value);
+      const res = await Promise.resolve(window.PuzzleHunt.submitAnswer(puzzleId, answerEl.value));
       setFeedback(res.ok, res.msg);
 
       if (!res.ok) {
