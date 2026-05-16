@@ -30,6 +30,9 @@ const MAX_PUZZLE_ID = Math.max(...PUZZLES.map((puzzle) => puzzle.id));
 const DATABASE_KEY = "puzzle_hunt_database_v1";
 const SESSION_KEY = "puzzle_hunt_current_user_v1";
 const ADMIN_ACCOUNT = { username: "easonadmin", password: "adminadmin" };
+const SEEDED_PLAYER_ACCOUNTS = [
+  { username: "eason test", password: "adminadmin", hiddenFromLeaderboard: true },
+];
 const HINT_EMAIL = "easond29@lakesideschool.org";
 const HINT_EMAIL_ENDPOINT = `https://formsubmit.co/ajax/${HINT_EMAIL}`;
 
@@ -151,7 +154,7 @@ function showNotification(message, type = "ok") {
 // Account database helpers
 // -------------------------
 function defaultProgress() {
-  return { unlockedUpTo: 0, solvedIds: [] };
+  return { unlockedUpTo: 0, solvedIds: [], solvedAtById: {} };
 }
 
 function defaultHintRequests() {
@@ -214,6 +217,15 @@ function usernameKey(username) {
 
 function isAdminUsername(username) {
   return usernameKey(username) === usernameKey(ADMIN_ACCOUNT.username);
+}
+
+function getSeededPlayerAccount(username) {
+  const key = usernameKey(username);
+  return SEEDED_PLAYER_ACCOUNTS.find((account) => usernameKey(account.username) === key) || null;
+}
+
+function isReservedPlayerUsername(username) {
+  return Boolean(getSeededPlayerAccount(username));
 }
 
 function isCurrentUserAdmin() {
@@ -281,6 +293,9 @@ function sanitizeProgress(progress) {
 
   const unlockedUpTo = Number(progress.unlockedUpTo);
   const solvedIds = Array.isArray(progress.solvedIds) ? progress.solvedIds : [];
+  const solvedAtById = progress.solvedAtById && typeof progress.solvedAtById === "object"
+    ? progress.solvedAtById
+    : {};
 
   if (!Number.isFinite(unlockedUpTo) || unlockedUpTo < 0) return fallback;
 
@@ -290,9 +305,20 @@ function sanitizeProgress(progress) {
       .filter((n) => Number.isFinite(n) && n >= 0 && n <= MAX_PUZZLE_ID)
   );
 
+  const cleanSolvedAtById = Object.fromEntries(
+    Array.from(solvedSet)
+      .map((puzzleId) => [String(puzzleId), solvedAtById[String(puzzleId)] || solvedAtById[puzzleId] || ""])
+      .filter(([, solvedAt]) => {
+        if (!solvedAt) return false;
+        const date = new Date(solvedAt);
+        return !Number.isNaN(date.getTime());
+      })
+  );
+
   return {
     unlockedUpTo: Math.min(unlockedUpTo, MAX_PUZZLE_ID + 1),
     solvedIds: Array.from(solvedSet),
+    solvedAtById: cleanSolvedAtById,
   };
 }
 
@@ -326,6 +352,9 @@ async function createAccount(username, password) {
   if (isAdminUsername(validation.username)) {
     return { ok: false, msg: "That username is reserved for hunt administration." };
   }
+  if (isReservedPlayerUsername(validation.username)) {
+    return { ok: false, msg: "That username already exists. Log in instead." };
+  }
 
   const database = loadDatabase();
   const key = usernameKey(validation.username);
@@ -336,6 +365,7 @@ async function createAccount(username, password) {
   database.users[key] = {
     username: validation.username,
     passwordHash: await hashPassword(validation.username, validation.password),
+    hiddenFromLeaderboard: false,
     progress: defaultProgress(),
     hintRequests: defaultHintRequests(),
     puzzleStats: defaultPuzzleStats(),
@@ -348,6 +378,28 @@ async function createAccount(username, password) {
   return { ok: true, msg: `Welcome, ${validation.username}! Your account is ready.` };
 }
 
+async function ensureSeededPlayerAccount(account) {
+  const database = loadDatabase();
+  const key = usernameKey(account.username);
+  const now = new Date().toISOString();
+  const existing = database.users[key];
+
+  database.users[key] = {
+    ...(existing && typeof existing === "object" ? existing : {}),
+    username: account.username,
+    passwordHash: await hashPassword(account.username, account.password),
+    hiddenFromLeaderboard: Boolean(account.hiddenFromLeaderboard),
+    progress: sanitizeProgress(existing?.progress),
+    hintRequests: getUserHintRequests(existing),
+    puzzleStats: sanitizePuzzleStats(existing?.puzzleStats),
+    createdAt: existing?.createdAt || now,
+    updatedAt: existing?.updatedAt || now,
+  };
+
+  saveDatabase(database);
+  return database.users[key];
+}
+
 async function login(username, password) {
   const validation = validateCredentials(username, password);
   if (!validation.ok) return validation;
@@ -357,6 +409,15 @@ async function login(username, password) {
 
     setCurrentUsername(ADMIN_ACCOUNT.username);
     return { ok: true, msg: "Welcome, admin. All puzzles and account tools are unlocked." };
+  }
+
+  const seededAccount = getSeededPlayerAccount(validation.username);
+  if (seededAccount) {
+    if (validation.password !== seededAccount.password) return { ok: false, msg: "Incorrect password." };
+
+    const user = await ensureSeededPlayerAccount(seededAccount);
+    setCurrentUsername(user.username);
+    return { ok: true, msg: `Welcome back, ${user.username}!` };
   }
 
   const database = loadDatabase();
@@ -455,18 +516,40 @@ function formatCurrentPuzzleStatus(user) {
   return `Current puzzle: ${puzzleLabel} — ${formatMinutesSince(currentStats.firstOpenedAt)} since first opened`;
 }
 
+function leaderboardSolveTime(progress, user) {
+  const huntSolveTimes = progress.solvedIds
+    .filter((id) => id !== INTRODUCTION_PUZZLE.id)
+    .map((id) => progress.solvedAtById[String(id)])
+    .filter(Boolean)
+    .sort();
+
+  return huntSolveTimes[huntSolveTimes.length - 1] || user.updatedAt || user.createdAt || "";
+}
+
+function compareLeaderboardSolveTime(a, b) {
+  if (!a.rankSolvedAt && !b.rankSolvedAt) return 0;
+  if (!a.rankSolvedAt) return 1;
+  if (!b.rankSolvedAt) return -1;
+  return a.rankSolvedAt.localeCompare(b.rankSolvedAt);
+}
+
 function getLeaderboard() {
   return getPlayerRows()
+    .filter((user) => !user.hiddenFromLeaderboard)
     .map((user) => {
       const progress = sanitizeProgress(user.progress);
       return {
         username: user.username,
         solvedCount: progress.solvedIds.filter((id) => id !== INTRODUCTION_PUZZLE.id).length,
-        updatedAt: user.updatedAt || user.createdAt || "",
+        rankSolvedAt: leaderboardSolveTime(progress, user),
       };
     })
     .sort((a, b) => {
       if (b.solvedCount !== a.solvedCount) return b.solvedCount - a.solvedCount;
+
+      const timeOrder = compareLeaderboardSolveTime(a, b);
+      if (timeOrder !== 0) return timeOrder;
+
       return a.username.localeCompare(b.username);
     });
 }
@@ -903,6 +986,10 @@ function submitAnswer(puzzleId, inputValue) {
     solved.add(puzzleId);
 
     progress.solvedIds = Array.from(solved);
+    progress.solvedAtById = {
+      ...(progress.solvedAtById || {}),
+      [String(puzzleId)]: new Date().toISOString(),
+    };
     progress.unlockedUpTo = Math.max(progress.unlockedUpTo, puzzleId + 1);
     saveProgress(progress);
 
