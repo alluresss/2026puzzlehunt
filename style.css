@@ -428,29 +428,6 @@ button:disabled, a.button[aria-disabled="true"]{
   100% { transform:translate3d(calc(var(--x) + var(--dx)), calc(var(--y) + var(--dy)), 0) rotate(var(--rot)) scale(1); opacity:0; }
 }
 
-/* =========================
-   Transition overlay
-========================= */
-#pageTransition{
-  position:fixed;
-  inset:0;
-  pointer-events:none;
-  z-index:9999;
-  opacity:0;
-}
-
-body.pt-out #pageTransition{
-  opacity:1;
-  background:rgba(248,251,255,.76);
-  backdrop-filter:blur(14px);
-  animation:outFade 420ms ease forwards;
-}
-
-@keyframes outFade{
-  0%   { opacity:0; }
-  100% { opacity:1; }
-}
-
 @media (max-width:760px){
   .hero-grid{ grid-template-columns:1fr; }
   .section-heading{ display:block; }
