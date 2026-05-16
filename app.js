@@ -51,6 +51,7 @@ const REMOTE_SYNC_INTERVAL_MS = 15000;
 let syncPushTimer = null;
 let syncInFlight = false;
 let initialRemoteSyncPromise = null;
+let pendingRemotePushPromise = null;
 
 
 // -------------------------
@@ -169,7 +170,7 @@ function defaultPuzzleStats() {
 }
 
 function defaultDatabase() {
-  return { version: 1, users: {}, publicHints: [] };
+  return { version: 1, users: {}, publicHints: [], deletedUserKeys: [] };
 }
 
 function loadDatabase() {
@@ -186,6 +187,7 @@ function loadDatabase() {
       version: 1,
       users: parsed.users,
       publicHints: Array.isArray(parsed.publicHints) ? parsed.publicHints : [],
+      deletedUserKeys: Array.isArray(parsed.deletedUserKeys) ? parsed.deletedUserKeys.map(usernameKey).filter(Boolean) : [],
     };
   } catch {
     return defaultDatabase();
@@ -206,6 +208,7 @@ function saveDatabase(database, options = {}) {
     version: 1,
     users: cleanUsers,
     publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
+    deletedUserKeys: Array.isArray(database?.deletedUserKeys) ? database.deletedUserKeys.map(usernameKey).filter(Boolean) : [],
   };
   localStorage.setItem(DATABASE_KEY, JSON.stringify(cleanDatabase));
   if (!options.skipRemote) queueRemoteDatabasePush();
@@ -351,10 +354,16 @@ function mergePublicHints(localHints, remoteHints) {
 function mergeDatabases(localDatabase, remoteDatabase) {
   const local = localDatabase && typeof localDatabase === "object" ? localDatabase : defaultDatabase();
   const remote = remoteDatabase && typeof remoteDatabase === "object" ? remoteDatabase : defaultDatabase();
+  const deletedUserKeys = Array.from(new Set([
+    ...(Array.isArray(local.deletedUserKeys) ? local.deletedUserKeys : []),
+    ...(Array.isArray(remote.deletedUserKeys) ? remote.deletedUserKeys : []),
+  ].map(usernameKey).filter(Boolean)));
+  const deletedSet = new Set(deletedUserKeys);
   const users = {};
   const keys = new Set([...Object.keys(local.users || {}), ...Object.keys(remote.users || {})]);
 
   for (const key of keys) {
+    if (deletedSet.has(usernameKey(key))) continue;
     users[key] = mergeUserRecords(local.users?.[key], remote.users?.[key]);
   }
 
@@ -362,6 +371,7 @@ function mergeDatabases(localDatabase, remoteDatabase) {
     version: 1,
     users,
     publicHints: mergePublicHints(local.publicHints, remote.publicHints),
+    deletedUserKeys,
   };
 }
 
@@ -402,7 +412,8 @@ async function pushRemoteDatabase(database = loadDatabase(), options = {}) {
     });
 
     if (response.ok) {
-      saveDatabase(payload, { skipRemote: true });
+      const savedDatabase = await response.json().catch(() => payload);
+      saveDatabase(savedDatabase && typeof savedDatabase === "object" ? savedDatabase : payload, { skipRemote: true });
     }
 
     return response.ok;
@@ -414,11 +425,23 @@ async function pushRemoteDatabase(database = loadDatabase(), options = {}) {
 }
 
 function queueRemoteDatabasePush() {
-  if (!remoteDatabaseUrl()) return;
+  if (!remoteDatabaseUrl()) return Promise.resolve(false);
   clearTimeout(syncPushTimer);
-  syncPushTimer = setTimeout(() => {
-    pushRemoteDatabase();
-  }, 350);
+  pendingRemotePushPromise = new Promise((resolve) => {
+    syncPushTimer = setTimeout(() => {
+      syncPushTimer = null;
+      pushRemoteDatabase().then(resolve);
+    }, 350);
+  });
+  return pendingRemotePushPromise;
+}
+
+function flushRemoteDatabasePush(database = loadDatabase()) {
+  if (!remoteDatabaseUrl()) return Promise.resolve(false);
+  clearTimeout(syncPushTimer);
+  syncPushTimer = null;
+  pendingRemotePushPromise = pushRemoteDatabase(database);
+  return pendingRemotePushPromise;
 }
 
 function ensureRemoteDatabaseSyncedOnce() {
@@ -663,6 +686,10 @@ async function createAccount(username, password) {
     return { ok: false, msg: "That username already exists. Log in instead." };
   }
 
+  database.deletedUserKeys = (Array.isArray(database.deletedUserKeys) ? database.deletedUserKeys : [])
+    .map(usernameKey)
+    .filter((deletedKey) => deletedKey && deletedKey !== key);
+
   database.users[key] = {
     username: validation.username,
     passwordHash: await hashPassword(validation.username, validation.password),
@@ -675,6 +702,7 @@ async function createAccount(username, password) {
   };
 
   saveDatabase(database);
+  await flushRemoteDatabasePush(database);
   setCurrentUsername(validation.username);
   return { ok: true, msg: `Welcome, ${validation.username}! Your account is ready.` };
 }
@@ -699,6 +727,7 @@ async function ensureAdminAccount() {
   };
 
   saveDatabase(database);
+  await flushRemoteDatabasePush(database);
   return database.users[key];
 }
 
@@ -721,6 +750,7 @@ async function ensureSeededPlayerAccount(account) {
   };
 
   saveDatabase(database);
+  await flushRemoteDatabasePush(database);
   return database.users[key];
 }
 
@@ -777,6 +807,10 @@ function deleteUserAccount(username) {
   if (!user) return { ok: false, msg: "That account no longer exists." };
 
   delete database.users[key];
+  database.deletedUserKeys = Array.from(new Set([
+    ...(Array.isArray(database.deletedUserKeys) ? database.deletedUserKeys : []),
+    key,
+  ].map(usernameKey).filter(Boolean)));
   saveDatabase(database);
 
   const currentUsername = normalizeUsername(sessionStorage.getItem(SESSION_KEY));
@@ -1374,6 +1408,7 @@ function submitAnswer(puzzleId, inputValue) {
     };
     progress.unlockedUpTo = Math.max(progress.unlockedUpTo, puzzleId + 1);
     saveProgress(progress);
+    const syncPromise = flushRemoteDatabasePush();
 
     const isIntroduction = puzzleId === INTRODUCTION_PUZZLE.id;
     const isLast = puzzleId === HUNT_PUZZLES[HUNT_PUZZLES.length - 1].id;
@@ -1387,6 +1422,7 @@ function submitAnswer(puzzleId, inputValue) {
       ok: true,
       msg,
       redirectHome: true,
+      syncPromise,
     };
   }
 
@@ -2292,7 +2328,7 @@ document.addEventListener("visibilitychange", () => {
 
 window.addEventListener("beforeunload", () => {
   flushPuzzleTimer();
-  if (remoteDatabaseUrl()) pushRemoteDatabase();
+  if (remoteDatabaseUrl()) flushRemoteDatabasePush();
 });
 
 window.addEventListener("storage", (event) => {
