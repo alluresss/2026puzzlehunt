@@ -31,7 +31,12 @@ const DATABASE_KEY = "puzzle_hunt_database_v1";
 const SESSION_KEY = "puzzle_hunt_current_user_v1";
 const ADMIN_ACCOUNT = { username: "easonadmin", password: "adminadmin" };
 const SEEDED_PLAYER_ACCOUNTS = [
-  { username: "eason test", password: "adminadmin", hiddenFromLeaderboard: true },
+  {
+    username: "eason test",
+    password: "adminadmin",
+    hiddenFromLeaderboard: true,
+    unlockAllPuzzles: true,
+  },
 ];
 const HINT_EMAIL = "easond29@lakesideschool.org";
 const HINT_EMAIL_ENDPOINT = `https://formsubmit.co/ajax/${HINT_EMAIL}`;
@@ -211,6 +216,21 @@ function getSeededPlayerAccount(username) {
   return SEEDED_PLAYER_ACCOUNTS.find((account) => usernameKey(account.username) === key) || null;
 }
 
+function seededPlayerProgress(account, existingProgress) {
+  const progress = sanitizeProgress(existingProgress);
+
+  if (!account?.unlockAllPuzzles) return progress;
+
+  const solved = new Set(progress.solvedIds);
+  solved.add(INTRODUCTION_PUZZLE.id);
+
+  return {
+    ...progress,
+    unlockedUpTo: MAX_PUZZLE_ID,
+    solvedIds: Array.from(solved),
+  };
+}
+
 function isReservedPlayerUsername(username) {
   return Boolean(getSeededPlayerAccount(username));
 }
@@ -316,7 +336,8 @@ function loadProgress() {
 
   const database = loadDatabase();
   const user = database.users[usernameKey(username)];
-  return sanitizeProgress(user?.progress);
+  const seededAccount = getSeededPlayerAccount(username);
+  return seededPlayerProgress(seededAccount, user?.progress);
 }
 
 function saveProgress(progress) {
@@ -327,7 +348,7 @@ function saveProgress(progress) {
   const key = usernameKey(username);
   if (!database.users[key]) return false;
 
-  database.users[key].progress = sanitizeProgress(progress);
+  database.users[key].progress = seededPlayerProgress(getSeededPlayerAccount(username), progress);
   database.users[key].updatedAt = new Date().toISOString();
   saveDatabase(database);
   return true;
@@ -376,7 +397,7 @@ async function ensureSeededPlayerAccount(account) {
     username: account.username,
     passwordHash: await hashPassword(account.username, account.password),
     hiddenFromLeaderboard: Boolean(account.hiddenFromLeaderboard),
-    progress: sanitizeProgress(existing?.progress),
+    progress: seededPlayerProgress(account, existing?.progress),
     hintRequests: getUserHintRequests(existing),
     puzzleStats: sanitizePuzzleStats(existing?.puzzleStats),
     createdAt: existing?.createdAt || now,
