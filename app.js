@@ -31,14 +31,7 @@ const MAX_PUZZLE_ID = Math.max(...PUZZLES.map((puzzle) => puzzle.id));
 const DATABASE_KEY = "puzzle_hunt_database_v1";
 const SESSION_KEY = "puzzle_hunt_current_user_v1";
 const ADMIN_ACCOUNT = { username: "easonadmin", password: "adminadmin" };
-const SEEDED_PLAYER_ACCOUNTS = [
-  {
-    username: "EASONEASON",
-    password: "adminadmin",
-    hiddenFromLeaderboard: true,
-    unlockAllPuzzles: true,
-  },
-];
+const RETIRED_SEEDED_PLAYER_USER_KEYS = ["easoneason"];
 const HINT_EMAIL = "easond29@lakesideschool.org";
 const HINT_EMAIL_ENDPOINT = `https://formsubmit.co/ajax/${HINT_EMAIL}`;
 const SOLVE_NOTIFICATION_KEY = "puzzle_hunt_solve_notification_v1";
@@ -177,7 +170,7 @@ function defaultPuzzleStats() {
 }
 
 function defaultDatabase() {
-  return { version: 1, users: {}, publicHints: [], deletedUserKeys: [] };
+  return { version: 1, users: {}, publicHints: [], deletedUserKeys: [...RETIRED_SEEDED_PLAYER_USER_KEYS] };
 }
 
 function loadDatabase() {
@@ -190,12 +183,12 @@ function loadDatabase() {
       return defaultDatabase();
     }
 
-    return {
+    return retireSeededPlayerAccounts({
       version: 1,
       users: parsed.users,
       publicHints: Array.isArray(parsed.publicHints) ? parsed.publicHints : [],
       deletedUserKeys: Array.isArray(parsed.deletedUserKeys) ? parsed.deletedUserKeys.map(usernameKey).filter(Boolean) : [],
-    };
+    });
   } catch {
     return defaultDatabase();
   }
@@ -211,12 +204,12 @@ function saveDatabase(database, options = {}) {
         : user,
     ])
   );
-  const cleanDatabase = {
+  const cleanDatabase = retireSeededPlayerAccounts({
     version: 1,
     users: cleanUsers,
     publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
     deletedUserKeys: Array.isArray(database?.deletedUserKeys) ? database.deletedUserKeys.map(usernameKey).filter(Boolean) : [],
-  };
+  });
   localStorage.setItem(DATABASE_KEY, JSON.stringify(cleanDatabase));
   if (!options.skipRemote) queueRemoteDatabasePush();
 }
@@ -427,12 +420,12 @@ function mergeDatabases(localDatabase, remoteDatabase) {
     users[key] = mergeUserRecords(local.users?.[key], remote.users?.[key]);
   }
 
-  return {
+  return retireSeededPlayerAccounts({
     version: 1,
     users,
     publicHints: mergePublicHints(local.publicHints, remote.publicHints),
     deletedUserKeys,
-  };
+  });
 }
 
 async function readSyncResponseError(response, fallback) {
@@ -458,6 +451,7 @@ async function fetchRemoteDatabase() {
 }
 
 async function pushRemoteDatabase(database = loadDatabase(), options = {}) {
+  database = retireSeededPlayerAccounts(database);
   const url = remoteDatabaseUrl();
   if (!url) return false;
 
@@ -591,28 +585,32 @@ function isAdminUsername(username) {
   return usernameKey(username) === usernameKey(ADMIN_ACCOUNT.username);
 }
 
-function getSeededPlayerAccount(username) {
-  const key = usernameKey(username);
-  return SEEDED_PLAYER_ACCOUNTS.find((account) => usernameKey(account.username) === key) || null;
+function isRetiredSeededPlayerUsername(username) {
+  return RETIRED_SEEDED_PLAYER_USER_KEYS.includes(usernameKey(username));
 }
 
-function seededPlayerProgress(account, existingProgress) {
-  const progress = sanitizeProgress(existingProgress);
+function retireSeededPlayerAccounts(database) {
+  const retiredKeys = new Set(RETIRED_SEEDED_PLAYER_USER_KEYS);
+  const users = {};
 
-  if (!account?.unlockAllPuzzles) return progress;
+  for (const [key, user] of Object.entries(database?.users || {})) {
+    const cleanKey = usernameKey(key);
+    const cleanUsername = usernameKey(user?.username);
+    if (retiredKeys.has(cleanKey) || retiredKeys.has(cleanUsername)) continue;
+    users[key] = user;
+  }
 
-  const solved = new Set(progress.solvedIds);
-  solved.add(INTRODUCTION_PUZZLE.id);
+  const deletedUserKeys = Array.from(new Set([
+    ...(Array.isArray(database?.deletedUserKeys) ? database.deletedUserKeys : []),
+    ...RETIRED_SEEDED_PLAYER_USER_KEYS,
+  ].map(usernameKey).filter(Boolean)));
 
   return {
-    ...progress,
-    unlockedUpTo: MAX_PUZZLE_ID,
-    solvedIds: Array.from(solved),
+    version: 1,
+    users,
+    publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
+    deletedUserKeys,
   };
-}
-
-function isReservedPlayerUsername(username) {
-  return Boolean(getSeededPlayerAccount(username));
 }
 
 function isCurrentUserAdmin() {
@@ -724,8 +722,7 @@ function loadProgress() {
   const user = database.users[usernameKey(username)];
   if (isAdminUsername(username)) return adminProgress(user?.progress);
 
-  const seededAccount = getSeededPlayerAccount(username);
-  return seededPlayerProgress(seededAccount, user?.progress);
+  return sanitizeProgress(user?.progress);
 }
 
 function saveProgress(progress) {
@@ -754,7 +751,7 @@ function saveProgress(progress) {
 
   database.users[key].progress = isAdminUsername(username)
     ? adminProgress(progress)
-    : seededPlayerProgress(getSeededPlayerAccount(username), progress);
+    : sanitizeProgress(progress);
   database.users[key].updatedAt = now;
   saveDatabase(database);
   return true;
@@ -774,8 +771,8 @@ async function createAccount(username, password) {
   if (isAdminUsername(validation.username)) {
     return { ok: false, msg: "That username is reserved for hunt administration." };
   }
-  if (isReservedPlayerUsername(validation.username)) {
-    return { ok: false, msg: "That username already exists. Log in instead." };
+  if (isRetiredSeededPlayerUsername(validation.username)) {
+    return { ok: false, msg: "That seeded account has been removed." };
   }
 
   const database = loadDatabase();
@@ -839,29 +836,6 @@ async function ensureAdminAccount() {
   return database.users[key];
 }
 
-async function ensureSeededPlayerAccount(account) {
-  const database = loadDatabase();
-  const key = usernameKey(account.username);
-  const now = new Date().toISOString();
-  const existing = database.users[key];
-
-  database.users[key] = {
-    ...(existing && typeof existing === "object" ? existing : {}),
-    username: account.username,
-    passwordHash: await hashPassword(account.username, account.password),
-    hiddenFromLeaderboard: Boolean(account.hiddenFromLeaderboard),
-    progress: seededPlayerProgress(account, existing?.progress),
-    hintRequests: getUserHintRequests(existing),
-    puzzleStats: sanitizePuzzleStats(existing?.puzzleStats),
-    createdAt: existing?.createdAt || now,
-    updatedAt: existing?.updatedAt || now,
-  };
-
-  saveDatabase(database);
-  await flushRemoteDatabasePush(database);
-  return database.users[key];
-}
-
 async function login(username, password) {
   const synced = await ensureRemoteDatabaseSyncedOnce();
 
@@ -880,13 +854,8 @@ async function login(username, password) {
     return { ok: true, msg: "Welcome, admin. All puzzles and account tools are unlocked." };
   }
 
-  const seededAccount = getSeededPlayerAccount(validation.username);
-  if (seededAccount) {
-    if (validation.password !== seededAccount.password) return { ok: false, msg: "Incorrect password." };
-
-    const user = await ensureSeededPlayerAccount(seededAccount);
-    setCurrentUsername(user.username);
-    return { ok: true, msg: `Welcome back, ${user.username}!` };
+  if (isRetiredSeededPlayerUsername(validation.username)) {
+    return { ok: false, msg: "That seeded account has been removed." };
   }
 
   const database = loadDatabase();
