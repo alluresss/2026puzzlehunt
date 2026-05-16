@@ -42,9 +42,15 @@ const SEEDED_PLAYER_ACCOUNTS = [
 const HINT_EMAIL = "easond29@lakesideschool.org";
 const HINT_EMAIL_ENDPOINT = `https://formsubmit.co/ajax/${HINT_EMAIL}`;
 const SOLVE_NOTIFICATION_KEY = "puzzle_hunt_solve_notification_v1";
-const SYNC_ENDPOINT = (window.PUZZLE_HUNT_SYNC_ENDPOINT || "").toString().trim().replace(/\/+$/, "");
+// Use a real shared sync endpoint for multiplayer accounts/progress.
+// Configure DEFAULT_SYNC_ENDPOINT once here (or set window.PUZZLE_HUNT_SYNC_ENDPOINT
+// before app.js loads) so index.html and every puzzle page talk to the same database.
+const DEFAULT_SYNC_ENDPOINT = "/api";
+const SYNC_ENDPOINT = (window.PUZZLE_HUNT_SYNC_ENDPOINT || DEFAULT_SYNC_ENDPOINT).toString().trim().replace(/\/+$/, "");
+const REMOTE_SYNC_INTERVAL_MS = 15000;
 let syncPushTimer = null;
 let syncInFlight = false;
+let initialRemoteSyncPromise = null;
 
 
 // -------------------------
@@ -376,21 +382,29 @@ async function fetchRemoteDatabase() {
   return data && typeof data === "object" ? data : defaultDatabase();
 }
 
-async function pushRemoteDatabase(database = loadDatabase()) {
+async function pushRemoteDatabase(database = loadDatabase(), options = {}) {
   const url = remoteDatabaseUrl();
   if (!url || syncInFlight) return false;
 
   syncInFlight = true;
   try {
+    const payload = options.mergeRemote === false
+      ? database
+      : mergeDatabases(await fetchRemoteDatabase().catch(() => defaultDatabase()), database);
     const response = await fetch(url, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify(database),
+      body: JSON.stringify(payload),
       keepalive: true,
     });
+
+    if (response.ok) {
+      saveDatabase(payload, { skipRemote: true });
+    }
+
     return response.ok;
   } catch {
     return false;
@@ -407,6 +421,34 @@ function queueRemoteDatabasePush() {
   }, 350);
 }
 
+function ensureRemoteDatabaseSyncedOnce() {
+  if (!remoteDatabaseUrl()) return Promise.resolve(false);
+  if (!initialRemoteSyncPromise) {
+    initialRemoteSyncPromise = syncDatabaseFromRemote().finally(() => {
+      initialRemoteSyncPromise = null;
+    });
+  }
+  return initialRemoteSyncPromise;
+}
+
+function showSyncGate(message = "Syncing account progress…") {
+  let gate = document.getElementById("syncGate");
+  if (gate) return gate;
+
+  gate = document.createElement("div");
+  gate.id = "syncGate";
+  gate.className = "sync-gate";
+  gate.setAttribute("role", "status");
+  gate.setAttribute("aria-live", "polite");
+  gate.innerHTML = `<div class="sync-gate-card"><strong>${message}</strong><span>Please wait while the shared hunt database loads.</span></div>`;
+  document.body.appendChild(gate);
+  return gate;
+}
+
+function hideSyncGate() {
+  document.getElementById("syncGate")?.remove();
+}
+
 async function syncDatabaseFromRemote() {
   if (!remoteDatabaseUrl()) return false;
 
@@ -416,7 +458,7 @@ async function syncDatabaseFromRemote() {
 
     const merged = mergeDatabases(loadDatabase(), remote);
     saveDatabase(merged, { skipRemote: true });
-    await pushRemoteDatabase(merged);
+    await pushRemoteDatabase(merged, { mergeRemote: false });
     return true;
   } catch {
     return false;
@@ -820,7 +862,6 @@ function compareLeaderboardSolveTime(a, b) {
 
 function getLeaderboard() {
   return getPlayerRows()
-    .filter((user) => !user.hiddenFromLeaderboard)
     .map((user) => {
       const progress = sanitizeProgress(user.progress);
       return {
@@ -1260,7 +1301,7 @@ function formatMinutesSince(value) {
 // -------------------------
 // Puzzle API
 // -------------------------
-function requireUnlocked(puzzleId) {
+function requireUnlocked(puzzleId, options = {}) {
   const username = getCurrentUsername();
   if (!username) {
     navigateWithoutTransition("../index.html");
@@ -1275,10 +1316,26 @@ function requireUnlocked(puzzleId) {
   const progress = loadProgress();
   const { unlockedUpTo } = progress;
   if (puzzleId !== INTRODUCTION_PUZZLE.id && !hasCompletedIntroduction(progress)) {
+    if (remoteDatabaseUrl() && !options.afterSync) {
+      showSyncGate();
+      ensureRemoteDatabaseSyncedOnce().then(() => {
+        hideSyncGate();
+        requireUnlocked(puzzleId, { afterSync: true });
+      });
+      return;
+    }
     navigateWithoutTransition("introduction.html");
     return;
   }
   if (puzzleId > unlockedUpTo) {
+    if (remoteDatabaseUrl() && !options.afterSync) {
+      showSyncGate();
+      ensureRemoteDatabaseSyncedOnce().then(() => {
+        hideSyncGate();
+        requireUnlocked(puzzleId, { afterSync: true });
+      });
+      return;
+    }
     navigateWithoutTransition("../index.html");
     return;
   }
@@ -2253,7 +2310,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bindAuthControls();
   bindLeaderboardDialog();
   renderIndex();
-  syncDatabaseFromRemote().then((synced) => {
+  ensureRemoteDatabaseSyncedOnce().then((synced) => {
     if (!synced) return;
     renderIndex();
     const puzzleId = Number(document.body.dataset.puzzleId);
@@ -2276,6 +2333,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const puzzleId = Number(document.body.dataset.puzzleId);
     if (puzzleHintPanel && puzzleId) renderPuzzleHintPanel(puzzleId);
   }, 60000);
+
+  if (remoteDatabaseUrl()) {
+    setInterval(() => {
+      syncDatabaseFromRemote().then((synced) => {
+        if (!synced) return;
+        renderIndex();
+        const puzzleId = Number(document.body.dataset.puzzleId);
+        if (puzzleId) renderPuzzleHintPanel(puzzleId);
+      });
+    }, REMOTE_SYNC_INTERVAL_MS);
+  }
 });
 
 window.PuzzleHunt = {
