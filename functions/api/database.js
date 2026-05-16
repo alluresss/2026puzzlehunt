@@ -1,5 +1,18 @@
 const DATABASE_KEY = "database";
 const EMPTY_DATABASE = { version: 1, users: {}, publicHints: [] };
+const PREFERRED_KV_BINDINGS = ["PUZZLE_HUNT_KV", "PUZZLEHUNT_KV", "PUZZLE_HUNT_DATABASE", "DATABASE", "KV"];
+
+function isKvNamespace(binding) {
+  return Boolean(binding && typeof binding.get === "function" && typeof binding.put === "function");
+}
+
+function getDatabaseStore(env = {}) {
+  for (const name of PREFERRED_KV_BINDINGS) {
+    if (isKvNamespace(env[name])) return env[name];
+  }
+
+  return Object.values(env).find(isKvNamespace) || null;
+}
 
 function jsonResponse(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -167,10 +180,14 @@ export async function onRequest(context) {
   const { request, env } = context;
 
   if (request.method === "OPTIONS") return jsonResponse({ ok: true });
-  if (!env.PUZZLE_HUNT_KV) return jsonResponse({ error: "Missing PUZZLE_HUNT_KV binding" }, { status: 500 });
+
+  const store = getDatabaseStore(env);
+  if (!store) {
+    return jsonResponse({ error: "Missing writable Cloudflare KV binding for the puzzle hunt database" }, { status: 503 });
+  }
 
   if (request.method === "GET") {
-    const stored = await env.PUZZLE_HUNT_KV.get(DATABASE_KEY, { type: "json" });
+    const stored = await store.get(DATABASE_KEY, { type: "json" });
     return jsonResponse(cleanDatabase(stored || EMPTY_DATABASE));
   }
 
@@ -180,9 +197,9 @@ export async function onRequest(context) {
       return jsonResponse({ error: "Invalid database JSON" }, { status: 400 });
     }
 
-    const stored = await env.PUZZLE_HUNT_KV.get(DATABASE_KEY, { type: "json" });
+    const stored = await store.get(DATABASE_KEY, { type: "json" });
     const merged = mergeDatabases(stored || EMPTY_DATABASE, database);
-    await env.PUZZLE_HUNT_KV.put(DATABASE_KEY, JSON.stringify(merged));
+    await store.put(DATABASE_KEY, JSON.stringify(merged));
     return jsonResponse(merged);
   }
 
