@@ -240,6 +240,13 @@ function isCurrentUserAdmin() {
   return isAdminUsername(sessionStorage.getItem(SESSION_KEY));
 }
 
+function adminProgress(progress) {
+  return {
+    ...sanitizeProgress(progress),
+    unlockedUpTo: MAX_PUZZLE_ID,
+  };
+}
+
 function validateCredentials(username, password) {
   const cleanUsername = normalizeUsername(username);
   const rawPassword = (password ?? "").toString();
@@ -333,10 +340,11 @@ function sanitizeProgress(progress) {
 function loadProgress() {
   const username = getCurrentUsername();
   if (!username) return defaultProgress();
-  if (isAdminUsername(username)) return { unlockedUpTo: MAX_PUZZLE_ID, solvedIds: [] };
 
   const database = loadDatabase();
   const user = database.users[usernameKey(username)];
+  if (isAdminUsername(username)) return adminProgress(user?.progress);
+
   const seededAccount = getSeededPlayerAccount(username);
   return seededPlayerProgress(seededAccount, user?.progress);
 }
@@ -347,10 +355,27 @@ function saveProgress(progress) {
 
   const database = loadDatabase();
   const key = usernameKey(username);
-  if (!database.users[key]) return false;
+  const now = new Date().toISOString();
+  if (!database.users[key]) {
+    if (!isAdminUsername(username)) return false;
 
-  database.users[key].progress = seededPlayerProgress(getSeededPlayerAccount(username), progress);
-  database.users[key].updatedAt = new Date().toISOString();
+    database.users[key] = {
+      username: ADMIN_ACCOUNT.username,
+      passwordHash: "",
+      isAdmin: true,
+      hiddenFromLeaderboard: true,
+      progress: defaultProgress(),
+      hintRequests: defaultHintRequests(),
+      puzzleStats: defaultPuzzleStats(),
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  database.users[key].progress = isAdminUsername(username)
+    ? adminProgress(progress)
+    : seededPlayerProgress(getSeededPlayerAccount(username), progress);
+  database.users[key].updatedAt = now;
   saveDatabase(database);
   return true;
 }
@@ -387,6 +412,29 @@ async function createAccount(username, password) {
   return { ok: true, msg: `Welcome, ${validation.username}! Your account is ready.` };
 }
 
+async function ensureAdminAccount() {
+  const database = loadDatabase();
+  const key = usernameKey(ADMIN_ACCOUNT.username);
+  const now = new Date().toISOString();
+  const existing = database.users[key];
+
+  database.users[key] = {
+    ...(existing && typeof existing === "object" ? existing : {}),
+    username: ADMIN_ACCOUNT.username,
+    passwordHash: await hashPassword(ADMIN_ACCOUNT.username, ADMIN_ACCOUNT.password),
+    isAdmin: true,
+    hiddenFromLeaderboard: true,
+    progress: adminProgress(existing?.progress),
+    hintRequests: defaultHintRequests(),
+    puzzleStats: sanitizePuzzleStats(existing?.puzzleStats),
+    createdAt: existing?.createdAt || now,
+    updatedAt: existing?.updatedAt || now,
+  };
+
+  saveDatabase(database);
+  return database.users[key];
+}
+
 async function ensureSeededPlayerAccount(account) {
   const database = loadDatabase();
   const key = usernameKey(account.username);
@@ -416,7 +464,8 @@ async function login(username, password) {
   if (isAdminUsername(validation.username)) {
     if (validation.password !== ADMIN_ACCOUNT.password) return { ok: false, msg: "Incorrect password." };
 
-    setCurrentUsername(ADMIN_ACCOUNT.username);
+    const user = await ensureAdminAccount();
+    setCurrentUsername(user.username);
     return { ok: true, msg: "Welcome, admin. All puzzles and account tools are unlocked." };
   }
 
@@ -916,7 +965,7 @@ const activePuzzleTimer = { puzzleId: null, startedAt: 0 };
 function recordPuzzleTime(puzzleId) {
   const username = getCurrentUsername();
   const puzzle = getPuzzleById(puzzleId);
-  if (!username || isAdminUsername(username) || !puzzle) return false;
+  if (!username || !puzzle) return false;
 
   const database = loadDatabase();
   const key = usernameKey(username);
@@ -961,7 +1010,7 @@ function resumePuzzleTimer() {
 
 function startPuzzleTimer(puzzleId) {
   const puzzle = getPuzzleById(puzzleId);
-  if (!puzzle || isAdminUsername(getCurrentUsername())) return;
+  if (!puzzle) return;
 
   if (activePuzzleTimer.puzzleId !== puzzle.id) {
     flushPuzzleTimer();
@@ -991,7 +1040,10 @@ function requireUnlocked(puzzleId) {
     return;
   }
 
-  if (isAdminUsername(username)) return;
+  if (isAdminUsername(username)) {
+    startPuzzleTimer(puzzleId);
+    return;
+  }
 
   const progress = loadProgress();
   const { unlockedUpTo } = progress;
