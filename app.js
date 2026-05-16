@@ -10,20 +10,21 @@ const INTRODUCTION_PUZZLE = {
 };
 
 const HUNT_PUZZLES = [
-  { id: 1, title: "Puzzle 1", path: "puzzles/puzzle1.html", answer: "APPLE", kind: "Puzzle" },
-  { id: 2, title: "Puzzle 2", path: "puzzles/puzzle2.html", answer: "ORANGE", kind: "Puzzle" },
-  { id: 3, title: "Puzzle 3", path: "puzzles/puzzle3.html", answer: "BANANA", kind: "Puzzle" },
-  { id: 4, title: "Puzzle 4", path: "puzzles/puzzle4.html", answer: "PUZZLE4", kind: "Puzzle" },
-  { id: 5, title: "Puzzle 5", path: "puzzles/puzzle5.html", answer: "PUZZLE5", kind: "Puzzle" },
-  { id: 6, title: "Puzzle 6", path: "puzzles/puzzle6.html", answer: "PUZZLE6", kind: "Puzzle" },
-  { id: 7, title: "Puzzle 7", path: "puzzles/puzzle7.html", answer: "PUZZLE7", kind: "Puzzle" },
-  { id: 8, title: "Puzzle 8", path: "puzzles/puzzle8.html", answer: "PUZZLE8", kind: "Puzzle" },
-  { id: 9, title: "Puzzle 9", path: "puzzles/puzzle9.html", answer: "PUZZLE9", kind: "Puzzle" },
-  { id: 10, title: "Puzzle 10", path: "puzzles/puzzle10.html", answer: "PUZZLE10", kind: "Puzzle" },
-  { id: 11, title: "Puzzle 11", path: "puzzles/puzzle11.html", answer: "PUZZLE11", kind: "Puzzle" },
-  { id: 12, title: "Puzzle 12", path: "puzzles/metapuzzle.html", answer: "META", kind: "Meta" },
+  { id: 1, title: "Puzzle 1", path: "puzzles/puzzle1.html", answer: "AIRBUS", kind: "Puzzle" },
+  { id: 2, title: "Puzzle 2", path: "puzzles/puzzle2.html", answer: "GRAVITY", kind: "Puzzle" },
+  { id: 3, title: "Puzzle 3", path: "puzzles/puzzle3.html", answer: "PANCAKES", kind: "Puzzle" },
+  { id: 4, title: "Puzzle 4", path: "puzzles/puzzle4.html", answer: "BADGE", kind: "Puzzle" },
+  { id: 5, title: "Puzzle 5", path: "puzzles/puzzle5.html", answer: "OVERRIDE", kind: "Puzzle" },
+  { id: 6, title: "Puzzle 6", path: "puzzles/puzzle6.html", answer: "WOOL", kind: "Puzzle" },
+  { id: 7, title: "Puzzle 7", path: "puzzles/puzzle7.html", answer: "BOLDED", kind: "Puzzle" },
+  { id: 8, title: "Puzzle 8", path: "puzzles/puzzle8.html", answer: "EAGLE", kind: "Puzzle" },
+  { id: 9, title: "Puzzle 9", path: "puzzles/puzzle9.html", answer: "DOCUMENT", kind: "Puzzle" },
+  { id: 10, title: "Puzzle 10", path: "puzzles/puzzle10.html", answer: "PLANE", kind: "Puzzle" },
+  { id: 11, title: "Puzzle 11", path: "puzzles/puzzle11.html", answer: "PORTFOLIO", kind: "Puzzle" },
+  { id: 12, title: "Metapuzzle", path: "puzzles/metapuzzle.html", answer: "HACKED", kind: "Meta" },
 ];
 
+const MAIN_PUZZLES = HUNT_PUZZLES.filter((puzzle) => puzzle.kind === "Puzzle");
 const PUZZLES = [INTRODUCTION_PUZZLE, ...HUNT_PUZZLES];
 const MAX_PUZZLE_ID = Math.max(...PUZZLES.map((puzzle) => puzzle.id));
 
@@ -800,6 +801,30 @@ function getPublicHintsForPuzzle(puzzleId) {
   return getPublicHints().filter((hint) => hint.puzzleId === Number(puzzleId));
 }
 
+function revokePublicHint(hintId) {
+  if (!isCurrentUserAdmin()) return { ok: false, msg: "Only admins can revoke public hints." };
+
+  const database = loadDatabase();
+  const publicHints = Array.isArray(database.publicHints) ? database.publicHints : [];
+  let found = false;
+  const nextPublicHints = publicHints
+    .map(sanitizePublicHint)
+    .filter(Boolean)
+    .filter((hint) => {
+      if (hint.id !== hintId) return true;
+      found = true;
+      return false;
+    });
+
+  if (!found) {
+    return { ok: false, msg: "That public hint/clarification no longer exists." };
+  }
+
+  database.publicHints = nextPublicHints;
+  saveDatabase(database);
+  return { ok: true, msg: "Public hint/clarification revoked." };
+}
+
 function postPublicHint(puzzleId, content) {
   if (!isCurrentUserAdmin()) return { ok: false, msg: "Only admins can post public hints." };
 
@@ -960,10 +985,13 @@ function formatMinutesSince(value) {
 // Puzzle API
 // -------------------------
 function requireUnlocked(puzzleId) {
-  if (!getCurrentUsername()) {
+  const username = getCurrentUsername();
+  if (!username) {
     navigateWithoutTransition("../index.html");
     return;
   }
+
+  if (isAdminUsername(username)) return;
 
   const progress = loadProgress();
   const { unlockedUpTo } = progress;
@@ -980,8 +1008,12 @@ function requireUnlocked(puzzleId) {
 }
 
 function submitAnswer(puzzleId, inputValue) {
-  if (!getCurrentUsername()) {
+  const username = getCurrentUsername();
+  if (!username) {
     return { ok: false, msg: "Log in before submitting answers." };
+  }
+  if (isAdminUsername(username)) {
+    return { ok: false, msg: "Admins can review puzzle answers but cannot submit answers." };
   }
 
   if (isSolved(puzzleId)) {
@@ -1026,14 +1058,17 @@ function submitAnswer(puzzleId, inputValue) {
 }
 
 function getPuzzleState(puzzleId) {
+  const username = getCurrentUsername();
   const { unlockedUpTo, solvedIds } = loadProgress();
-  const solved = solvedIds.includes(puzzleId);
   const puzzle = PUZZLES.find((p) => p.id === puzzleId);
+  const isAdmin = isAdminUsername(username);
+  const solved = isAdmin || solvedIds.includes(puzzleId);
 
   return {
     unlockedUpTo,
     solved,
-    loggedIn: Boolean(getCurrentUsername()),
+    isAdmin,
+    loggedIn: Boolean(username),
     answer: solved ? puzzle?.answer ?? "" : "",
   };
 }
@@ -1066,7 +1101,7 @@ function renderLeaderboard() {
 
     const score = document.createElement("span");
     score.className = "leaderboard-score";
-    score.textContent = `${player.solvedCount} / ${HUNT_PUZZLES.length} hunt puzzles solved`;
+    score.textContent = `${player.solvedCount} / ${HUNT_PUZZLES.length} puzzle pages solved`;
 
     item.appendChild(name);
     item.appendChild(score);
@@ -1280,6 +1315,10 @@ function showHintRequestDialog(puzzleId) {
 function bindHintRequestButton(puzzleId) {
   const button = document.getElementById("requestHintBtn");
   if (!button || button.dataset.bound) return;
+  if (isAdminUsername(getCurrentUsername())) {
+    button.hidden = true;
+    return;
+  }
 
   button.dataset.bound = "true";
   document.body.dataset.puzzleId = String(puzzleId);
@@ -1423,7 +1462,7 @@ function renderAdminPanel() {
   setText("adminHintCount", `${pendingCount} pending · ${requests.length} total`);
   setText("adminPublicHintCount", `${publicHints.length} posted`);
   setText("adminUserCount", `${rows.length} player${rows.length === 1 ? "" : "s"}`);
-  setText("adminPuzzleCount", `${PUZZLES.length} pages (${HUNT_PUZZLES.length} hunt puzzles + introduction)`);
+  setText("adminPuzzleCount", `${PUZZLES.length} pages (${MAIN_PUZZLES.length} puzzles + metapuzzle + introduction)`);
   renderPuzzleCards(adminPuzzleList, PUZZLES, new Set(loadProgress().solvedIds), true);
 
   if (list) {
@@ -1444,7 +1483,7 @@ function renderAdminPanel() {
         name.textContent = user.username;
 
         const details = document.createElement("span");
-        details.textContent = `${user.progress.solvedIds.filter((id) => id !== INTRODUCTION_PUZZLE.id).length} / ${HUNT_PUZZLES.length} hunt puzzles solved`;
+        details.textContent = `${user.progress.solvedIds.filter((id) => id !== INTRODUCTION_PUZZLE.id).length} / ${HUNT_PUZZLES.length} puzzle pages solved`;
 
         const currentPuzzle = document.createElement("span");
         currentPuzzle.className = "admin-current-puzzle";
@@ -1505,9 +1544,16 @@ function renderAdminPanel() {
         content.className = "hint-progress";
         content.textContent = hint.content;
 
+        const revoke = document.createElement("button");
+        revoke.className = "danger";
+        revoke.type = "button";
+        revoke.textContent = "Revoke";
+        revoke.dataset.revokePublicHint = hint.id;
+
         item.appendChild(title);
         item.appendChild(date);
         item.appendChild(content);
+        item.appendChild(revoke);
         publicHintList.appendChild(item);
       }
     }
@@ -1630,13 +1676,13 @@ function renderIndex() {
   const nextPuzzle = introComplete
     ? HUNT_PUZZLES.find((p) => !solvedSet.has(p.id))
     : INTRODUCTION_PUZZLE;
-  const solvedHuntCount = HUNT_PUZZLES.filter((p) => solvedSet.has(p.id)).length;
+  const solvedMainPuzzleCount = MAIN_PUZZLES.filter((p) => solvedSet.has(p.id)).length;
 
   if (progressEl) {
     progressEl.textContent = isAdmin
       ? `Admin access: ${PUZZLES.length} pages visible`
       : introComplete
-        ? `${solvedHuntCount} of ${HUNT_PUZZLES.length} hunt puzzles solved`
+        ? `${solvedMainPuzzleCount} of ${MAIN_PUZZLES.length} puzzles solved${solvedSet.has(HUNT_PUZZLES[HUNT_PUZZLES.length - 1].id) ? " · metapuzzle solved" : ""}`
         : "Complete the introduction to unlock the puzzle board";
   }
   if (revealEl) {
@@ -1771,6 +1817,7 @@ function bindAuthControls() {
   const passwordEl = document.getElementById("password");
   const feedbackEl = document.getElementById("authFeedback");
   const adminUserList = document.getElementById("adminUserList");
+  const adminPublicHintList = document.getElementById("adminPublicHintList");
   bindAdminPublicHintButton();
   bindAdminWindowControls();
 
@@ -1824,6 +1871,20 @@ function bindAuthControls() {
       resetCurrentProgress();
       renderIndex();
       alert("Progress reset for the logged-in account.");
+    });
+  }
+
+  if (adminPublicHintList && !adminPublicHintList.dataset.bound) {
+    adminPublicHintList.dataset.bound = "true";
+    adminPublicHintList.addEventListener("click", (e) => {
+      const button = e.target.closest("[data-revoke-public-hint]");
+      if (!button || !isCurrentUserAdmin()) return;
+
+      if (!confirm("Revoke this public hint/clarification? Players will no longer see it.")) return;
+
+      const res = revokePublicHint(button.dataset.revokePublicHint);
+      renderIndex();
+      showNotification(res.msg, res.ok ? "ok" : "info");
     });
   }
 
