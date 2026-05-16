@@ -389,16 +389,38 @@ function mergePublicHints(localHints, remoteHints) {
   return Array.from(byId.values()).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
 }
 
+function isFreshAccountRecord(user) {
+  if (!user || typeof user !== "object") return false;
+  if (!user.createdAt || !user.updatedAt) return false;
+  return Math.abs(Date.parse(user.createdAt) - Date.parse(user.updatedAt)) <= 1000;
+}
+
 function mergeDatabases(localDatabase, remoteDatabase) {
   const local = localDatabase && typeof localDatabase === "object" ? localDatabase : defaultDatabase();
   const remote = remoteDatabase && typeof remoteDatabase === "object" ? remoteDatabase : defaultDatabase();
-  const deletedUserKeys = Array.from(new Set([
-    ...(Array.isArray(local.deletedUserKeys) ? local.deletedUserKeys : []),
-    ...(Array.isArray(remote.deletedUserKeys) ? remote.deletedUserKeys : []),
-  ].map(usernameKey).filter(Boolean)));
+  const localDeleted = (Array.isArray(local.deletedUserKeys) ? local.deletedUserKeys : []).map(usernameKey).filter(Boolean);
+  const remoteDeleted = (Array.isArray(remote.deletedUserKeys) ? remote.deletedUserKeys : []).map(usernameKey).filter(Boolean);
+  const keys = new Set([...Object.keys(local.users || {}), ...Object.keys(remote.users || {})]);
+  const revivedKeys = new Set();
+
+  for (const key of keys) {
+    const cleanKey = usernameKey(key);
+    if (!cleanKey) continue;
+
+    const localRevivesRemoteDeletion = remoteDeleted.includes(cleanKey)
+      && !localDeleted.includes(cleanKey)
+      && isFreshAccountRecord(local.users?.[key]);
+    const remoteRevivesLocalDeletion = localDeleted.includes(cleanKey)
+      && !remoteDeleted.includes(cleanKey)
+      && isFreshAccountRecord(remote.users?.[key]);
+
+    if (localRevivesRemoteDeletion || remoteRevivesLocalDeletion) revivedKeys.add(cleanKey);
+  }
+
+  const deletedUserKeys = Array.from(new Set([...localDeleted, ...remoteDeleted]))
+    .filter((key) => !revivedKeys.has(key));
   const deletedSet = new Set(deletedUserKeys);
   const users = {};
-  const keys = new Set([...Object.keys(local.users || {}), ...Object.keys(remote.users || {})]);
 
   for (const key of keys) {
     if (deletedSet.has(usernameKey(key))) continue;
@@ -413,6 +435,11 @@ function mergeDatabases(localDatabase, remoteDatabase) {
   };
 }
 
+async function readSyncResponseError(response, fallback) {
+  const data = await response.clone().json().catch(() => null);
+  return data?.error || data?.message || `${fallback} (HTTP ${response.status})`;
+}
+
 async function fetchRemoteDatabase() {
   const url = remoteDatabaseUrl();
   if (!url) return null;
@@ -424,7 +451,7 @@ async function fetchRemoteDatabase() {
   });
 
   if (response.status === 404) return defaultDatabase();
-  if (!response.ok) throw new Error(`Sync fetch failed: ${response.status}`);
+  if (!response.ok) throw new Error(await readSyncResponseError(response, "Could not load the shared account database"));
 
   const data = await response.json();
   return data && typeof data === "object" ? data : defaultDatabase();
@@ -460,12 +487,15 @@ async function pushRemoteDatabase(database = loadDatabase(), options = {}) {
         lastRemoteSyncAt = new Date().toISOString();
         const savedDatabase = await response.json().catch(() => payload);
         saveDatabase(savedDatabase && typeof savedDatabase === "object" ? savedDatabase : payload, { skipRemote: true });
-      } else if (options.markReachabilityOnFailure !== false) {
-        lastRemoteSyncOk = false;
+      } else {
+        const message = await readSyncResponseError(response, "Could not save to the shared account database");
+        console.warn(message);
+        if (options.markReachabilityOnFailure !== false) lastRemoteSyncOk = false;
       }
 
       return response.ok;
-    } catch {
+    } catch (error) {
+      console.warn(error?.message || "Could not communicate with the shared account database.");
       if (options.markReachabilityOnFailure !== false) lastRemoteSyncOk = false;
       return false;
     } finally {
@@ -759,6 +789,7 @@ async function createAccount(username, password) {
     .map(usernameKey)
     .filter((deletedKey) => deletedKey && deletedKey !== key);
 
+  const now = new Date().toISOString();
   database.users[key] = {
     username: validation.username,
     passwordHash: await hashPassword(validation.username, validation.password),
@@ -766,21 +797,23 @@ async function createAccount(username, password) {
     progress: defaultProgress(),
     hintRequests: defaultHintRequests(),
     puzzleStats: defaultPuzzleStats(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: now,
+    updatedAt: now,
   };
 
   saveDatabase(database);
   const savedRemotely = await flushRemoteDatabasePush(database);
-  if (remoteDatabaseUrl() && !savedRemotely) {
-    const latestDatabase = loadDatabase();
+  const latestDatabase = loadDatabase();
+  const savedUser = latestDatabase.users?.[key];
+
+  if (remoteDatabaseUrl() && (!savedRemotely || !savedUser)) {
     delete latestDatabase.users[key];
     saveDatabase(latestDatabase, { skipRemote: true });
-    return { ok: false, msg: "Account creation could not be saved to the shared database. Please try again." };
+    return { ok: false, msg: "Account creation could not be confirmed in the shared database. Please refresh and try again." };
   }
 
   setCurrentUsername(validation.username);
-  return { ok: true, msg: `Welcome, ${validation.username}! Your account is ready.` };
+  return { ok: true, msg: `Welcome, ${validation.username}! Your account was saved to the shared database.` };
 }
 
 async function ensureAdminAccount() {
@@ -2291,21 +2324,32 @@ function bindAuthControls() {
   async function runAuth(action) {
     const username = usernameEl?.value ?? "";
     const password = passwordEl?.value ?? "";
-    const res = action === "register"
-      ? await createAccount(username, password)
-      : await login(username, password);
+    const submitButtons = [authForm?.querySelector('button[type="submit"]'), registerBtn].filter(Boolean);
+    submitButtons.forEach((button) => { button.disabled = true; });
+    setFeedback(feedbackEl, true, action === "register" ? "Creating and saving your account…" : "Checking the shared account database…");
 
-    setFeedback(feedbackEl, res.ok, res.msg);
-    if (res.ok) {
-      if (passwordEl) passwordEl.value = "";
-      renderIndex();
-      showNotification(res.msg, "ok");
-      if (action === "register" && !isCurrentUserAdmin()) {
-        setTimeout(() => navigateWithoutTransition(INTRODUCTION_PUZZLE.path), 550);
-        return;
+    try {
+      const res = action === "register"
+        ? await createAccount(username, password)
+        : await login(username, password);
+
+      setFeedback(feedbackEl, res.ok, res.msg);
+      if (res.ok) {
+        if (passwordEl) passwordEl.value = "";
+        renderIndex();
+        showNotification(res.msg, "ok");
+        if (action === "register" && !isCurrentUserAdmin()) {
+          setTimeout(() => navigateWithoutTransition(INTRODUCTION_PUZZLE.path), 550);
+          return;
+        }
+        showPendingHintResponses();
+        showPendingPublicHints();
       }
-      showPendingHintResponses();
-      showPendingPublicHints();
+    } catch (error) {
+      console.warn(error?.message || "Authentication failed unexpectedly.");
+      setFeedback(feedbackEl, false, "The account request failed before it could be saved. Please refresh and try again.");
+    } finally {
+      submitButtons.forEach((button) => { button.disabled = false; });
     }
   }
 
