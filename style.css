@@ -625,6 +625,18 @@ button:disabled, a.button[aria-disabled="true"]{
   margin:12px 0 20px;
 }
 
+.public-announcements-window{
+  max-height:min(760px, calc(100vh - 32px));
+  display:flex;
+  flex-direction:column;
+}
+
+.public-announcement-dialog-list{
+  max-height:min(520px, calc(100vh - 240px));
+  overflow:auto;
+  padding-right:4px;
+}
+
 .icon-button{
   width:44px;
   height:44px;

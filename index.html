@@ -25,6 +25,7 @@
         <p id="revealText" class="muted"></p>
         <div class="row">
           <button id="openLeaderboardBtn" type="button">Leaderboard</button>
+          <button id="openPublicAnnouncementsBtn" type="button">Announcements</button>
           <button id="logoutBtn" class="secondary" type="button">Log out</button>
           <button id="resetBtn" class="secondary" type="button">Reset progress</button>
         </div>
@@ -178,19 +179,23 @@
         </div>
         <p class="muted">Future cells stay hidden until the current puzzle is solved.</p>
       </div>
-      <section id="publicAnnouncementPanel" class="public-announcement-panel" aria-labelledby="publicAnnouncementTitle" hidden>
-        <div class="public-announcement-heading">
-          <div>
-            <p class="eyebrow">Hunt broadcasts</p>
-            <h3 id="publicAnnouncementTitle">Public announcements</h3>
-          </div>
-          <span id="publicAnnouncementCount" class="hint-status approved">0 posted</span>
-        </div>
-        <p class="muted">Announcements appear here after you complete the introduction.</p>
-        <ul id="publicAnnouncementList" class="hint-history-list public-announcement-history"></ul>
-      </section>
       <ul id="puzzleList" class="gallery"></ul>
     </section>
+
+
+    <dialog id="publicAnnouncementsDialog" class="leaderboard-dialog public-announcements-dialog" aria-labelledby="publicAnnouncementsTitle">
+      <div class="leaderboard-window public-announcements-window">
+        <div class="leaderboard-window-header">
+          <div>
+            <p class="eyebrow">Hunt broadcasts</p>
+            <h2 id="publicAnnouncementsTitle">Public announcements</h2>
+          </div>
+          <button id="closePublicAnnouncementsBtn" class="secondary icon-button" type="button" aria-label="Close public announcements">×</button>
+        </div>
+        <p class="muted leaderboard-window-copy">All public announcements are listed below, with the most recent announcement first.</p>
+        <ul id="publicAnnouncementsDialogList" class="hint-history-list public-announcement-history public-announcement-dialog-list"></ul>
+      </div>
+    </dialog>
 
     <dialog id="leaderboardDialog" class="leaderboard-dialog" aria-labelledby="leaderboardTitle">
       <div class="leaderboard-window">
