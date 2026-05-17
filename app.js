@@ -176,6 +176,8 @@ function defaultDatabase() {
     publicHints: [],
     publicAnnouncements: [],
     deletedUserKeys: [...RETIRED_SEEDED_PLAYER_USER_KEYS],
+    deletedPublicHintIds: [],
+    deletedPublicAnnouncementIds: [],
   };
 }
 
@@ -195,6 +197,8 @@ function loadDatabase() {
       publicHints: Array.isArray(parsed.publicHints) ? parsed.publicHints : [],
       publicAnnouncements: Array.isArray(parsed.publicAnnouncements) ? parsed.publicAnnouncements : [],
       deletedUserKeys: Array.isArray(parsed.deletedUserKeys) ? parsed.deletedUserKeys.map(usernameKey).filter(Boolean) : [],
+      deletedPublicHintIds: Array.isArray(parsed.deletedPublicHintIds) ? parsed.deletedPublicHintIds.map(itemIdKey).filter(Boolean) : [],
+      deletedPublicAnnouncementIds: Array.isArray(parsed.deletedPublicAnnouncementIds) ? parsed.deletedPublicAnnouncementIds.map(itemIdKey).filter(Boolean) : [],
     });
   } catch {
     return defaultDatabase();
@@ -217,9 +221,15 @@ function saveDatabase(database, options = {}) {
     publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
     publicAnnouncements: Array.isArray(database?.publicAnnouncements) ? database.publicAnnouncements : [],
     deletedUserKeys: Array.isArray(database?.deletedUserKeys) ? database.deletedUserKeys.map(usernameKey).filter(Boolean) : [],
+    deletedPublicHintIds: Array.isArray(database?.deletedPublicHintIds) ? database.deletedPublicHintIds.map(itemIdKey).filter(Boolean) : [],
+    deletedPublicAnnouncementIds: Array.isArray(database?.deletedPublicAnnouncementIds) ? database.deletedPublicAnnouncementIds.map(itemIdKey).filter(Boolean) : [],
   });
   localStorage.setItem(DATABASE_KEY, JSON.stringify(cleanDatabase));
   if (!options.skipRemote) queueRemoteDatabasePush();
+}
+
+function itemIdKey(value) {
+  return (value ?? "").toString().trim();
 }
 
 function remoteDatabaseUrl() {
@@ -367,12 +377,14 @@ function mergeUserRecords(localUser, remoteUser) {
   };
 }
 
-function mergePublicHints(localHints, remoteHints) {
+function mergePublicHints(localHints, remoteHints, deletedHintIds = []) {
+  const deletedSet = new Set((Array.isArray(deletedHintIds) ? deletedHintIds : []).map(itemIdKey).filter(Boolean));
   const byId = new Map();
   [...(Array.isArray(localHints) ? localHints : []), ...(Array.isArray(remoteHints) ? remoteHints : [])]
     .map(sanitizePublicHint)
     .filter(Boolean)
     .forEach((hint) => {
+      if (deletedSet.has(itemIdKey(hint.id))) return;
       const existing = byId.get(hint.id);
       if (!existing) {
         byId.set(hint.id, hint);
@@ -390,12 +402,14 @@ function mergePublicHints(localHints, remoteHints) {
   return Array.from(byId.values()).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
 }
 
-function mergePublicAnnouncements(localAnnouncements, remoteAnnouncements) {
+function mergePublicAnnouncements(localAnnouncements, remoteAnnouncements, deletedAnnouncementIds = []) {
+  const deletedSet = new Set((Array.isArray(deletedAnnouncementIds) ? deletedAnnouncementIds : []).map(itemIdKey).filter(Boolean));
   const byId = new Map();
   [...(Array.isArray(localAnnouncements) ? localAnnouncements : []), ...(Array.isArray(remoteAnnouncements) ? remoteAnnouncements : [])]
     .map(sanitizePublicAnnouncement)
     .filter(Boolean)
     .forEach((announcement) => {
+      if (deletedSet.has(itemIdKey(announcement.id))) return;
       const existing = byId.get(announcement.id);
       if (!existing) {
         byId.set(announcement.id, announcement);
@@ -424,6 +438,14 @@ function mergeDatabases(localDatabase, remoteDatabase) {
   const remote = remoteDatabase && typeof remoteDatabase === "object" ? remoteDatabase : defaultDatabase();
   const localDeleted = (Array.isArray(local.deletedUserKeys) ? local.deletedUserKeys : []).map(usernameKey).filter(Boolean);
   const remoteDeleted = (Array.isArray(remote.deletedUserKeys) ? remote.deletedUserKeys : []).map(usernameKey).filter(Boolean);
+  const deletedPublicHintIds = Array.from(new Set([
+    ...(Array.isArray(local.deletedPublicHintIds) ? local.deletedPublicHintIds : []),
+    ...(Array.isArray(remote.deletedPublicHintIds) ? remote.deletedPublicHintIds : []),
+  ].map(itemIdKey).filter(Boolean)));
+  const deletedPublicAnnouncementIds = Array.from(new Set([
+    ...(Array.isArray(local.deletedPublicAnnouncementIds) ? local.deletedPublicAnnouncementIds : []),
+    ...(Array.isArray(remote.deletedPublicAnnouncementIds) ? remote.deletedPublicAnnouncementIds : []),
+  ].map(itemIdKey).filter(Boolean)));
   const keys = new Set([...Object.keys(local.users || {}), ...Object.keys(remote.users || {})]);
   const revivedKeys = new Set();
 
@@ -454,9 +476,11 @@ function mergeDatabases(localDatabase, remoteDatabase) {
   return retireSeededPlayerAccounts({
     version: 1,
     users,
-    publicHints: mergePublicHints(local.publicHints, remote.publicHints),
-    publicAnnouncements: mergePublicAnnouncements(local.publicAnnouncements, remote.publicAnnouncements),
+    publicHints: mergePublicHints(local.publicHints, remote.publicHints, deletedPublicHintIds),
+    publicAnnouncements: mergePublicAnnouncements(local.publicAnnouncements, remote.publicAnnouncements, deletedPublicAnnouncementIds),
     deletedUserKeys,
+    deletedPublicHintIds,
+    deletedPublicAnnouncementIds,
   });
 }
 
@@ -636,13 +660,25 @@ function retireSeededPlayerAccounts(database) {
     ...(Array.isArray(database?.deletedUserKeys) ? database.deletedUserKeys : []),
     ...RETIRED_SEEDED_PLAYER_USER_KEYS,
   ].map(usernameKey).filter(Boolean)));
+  const deletedPublicHintIds = Array.isArray(database?.deletedPublicHintIds)
+    ? database.deletedPublicHintIds.map(itemIdKey).filter(Boolean)
+    : [];
+  const deletedPublicAnnouncementIds = Array.isArray(database?.deletedPublicAnnouncementIds)
+    ? database.deletedPublicAnnouncementIds.map(itemIdKey).filter(Boolean)
+    : [];
+  const deletedPublicHintSet = new Set(deletedPublicHintIds);
+  const deletedPublicAnnouncementSet = new Set(deletedPublicAnnouncementIds);
 
   return {
     version: 1,
     users,
-    publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
-    publicAnnouncements: Array.isArray(database?.publicAnnouncements) ? database.publicAnnouncements : [],
+    publicHints: (Array.isArray(database?.publicHints) ? database.publicHints : [])
+      .filter((hint) => !deletedPublicHintSet.has(itemIdKey(hint?.id))),
+    publicAnnouncements: (Array.isArray(database?.publicAnnouncements) ? database.publicAnnouncements : [])
+      .filter((announcement) => !deletedPublicAnnouncementSet.has(itemIdKey(announcement?.id))),
     deletedUserKeys,
+    deletedPublicHintIds,
+    deletedPublicAnnouncementIds,
   };
 }
 
@@ -1286,6 +1322,10 @@ function revokePublicAnnouncement(announcementId) {
   }
 
   database.publicAnnouncements = nextPublicAnnouncements;
+  database.deletedPublicAnnouncementIds = Array.from(new Set([
+    ...(Array.isArray(database.deletedPublicAnnouncementIds) ? database.deletedPublicAnnouncementIds : []),
+    announcementId,
+  ].map(itemIdKey).filter(Boolean)));
   saveDatabase(database);
   return { ok: true, msg: "Public announcement revoked." };
 }
@@ -1419,6 +1459,10 @@ function revokePublicHint(hintId) {
   }
 
   database.publicHints = nextPublicHints;
+  database.deletedPublicHintIds = Array.from(new Set([
+    ...(Array.isArray(database.deletedPublicHintIds) ? database.deletedPublicHintIds : []),
+    hintId,
+  ].map(itemIdKey).filter(Boolean)));
   saveDatabase(database);
   return { ok: true, msg: "Public hint/clarification revoked." };
 }
