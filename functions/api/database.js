@@ -142,6 +142,7 @@ function cleanDatabase(database) {
     version: 1,
     users,
     publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
+    publicAnnouncements: Array.isArray(database?.publicAnnouncements) ? database.publicAnnouncements : [],
     deletedUserKeys: Array.from(new Set([
       ...(Array.isArray(database?.deletedUserKeys) ? database.deletedUserKeys : []),
       ...RETIRED_SEEDED_PLAYER_USER_KEYS,
@@ -263,6 +264,15 @@ function mergePublicHints(localHints, incomingHints) {
   }));
 }
 
+function mergePublicAnnouncements(localAnnouncements, incomingAnnouncements) {
+  return mergeArrayById(localAnnouncements, incomingAnnouncements, (local, incoming) => ({
+    ...local,
+    ...incoming,
+    seenBy: Array.from(new Set([...(local.seenBy || []), ...(incoming.seenBy || [])])),
+    createdAt: olderTimestamp(local.createdAt, incoming.createdAt) || local.createdAt || incoming.createdAt,
+  }));
+}
+
 function isFreshAccountRecord(user) {
   if (!user || typeof user !== "object") return false;
   if (!user.createdAt || !user.updatedAt) return false;
@@ -303,6 +313,7 @@ function mergeDatabases(localDatabase, incomingDatabase) {
     version: 1,
     users,
     publicHints: mergePublicHints(local.publicHints, incoming.publicHints),
+    publicAnnouncements: mergePublicAnnouncements(local.publicAnnouncements, incoming.publicAnnouncements),
     deletedUserKeys,
   };
 }
