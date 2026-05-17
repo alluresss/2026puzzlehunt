@@ -1740,6 +1740,51 @@ function renderLeaderboard() {
   }
 }
 
+function renderPublicAnnouncementsDialog() {
+  const list = document.getElementById("publicAnnouncementsDialogList");
+  if (!list) return;
+
+  list.innerHTML = "";
+
+  const username = getCurrentUsername();
+  const progress = loadProgress();
+  const canSee = Boolean(username && (isAdminUsername(username) || hasCompletedIntroduction(progress)));
+
+  if (!username || !canSee) {
+    const empty = document.createElement("li");
+    empty.className = "hint-history-empty";
+    empty.textContent = username
+      ? "Complete the introduction to unlock public announcements."
+      : "Log in to view public announcements.";
+    list.appendChild(empty);
+    return;
+  }
+
+  const announcements = getVisiblePublicAnnouncements();
+  if (!announcements.length) {
+    const empty = document.createElement("li");
+    empty.className = "hint-history-empty";
+    empty.textContent = "No public announcements have been posted yet.";
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const announcement of announcements) {
+    const item = document.createElement("li");
+    item.className = "public-announcement-item";
+
+    const heading = document.createElement("strong");
+    heading.textContent = `Posted ${formatRequestDate(announcement.createdAt)}`;
+
+    const body = document.createElement("p");
+    body.textContent = announcement.content;
+
+    item.appendChild(heading);
+    item.appendChild(body);
+    list.appendChild(item);
+  }
+}
+
 
 function openDialog(dialog) {
   if (typeof dialog.showModal === "function") {
@@ -1973,19 +2018,22 @@ function bindHintRequestButton(puzzleId) {
 
 function openLeaderboardDialog(dialog) {
   renderLeaderboard();
-  if (typeof dialog.showModal === "function") {
-    dialog.showModal();
-  } else {
-    dialog.setAttribute("open", "");
-  }
+  openDialog(dialog);
 }
 
 function closeLeaderboardDialog(dialog) {
-  if (typeof dialog.close === "function") {
-    dialog.close();
-  } else {
-    dialog.removeAttribute("open");
-  }
+  closeDialog(dialog);
+}
+
+function openPublicAnnouncementsDialog(dialog) {
+  renderPublicAnnouncementsDialog();
+  const unseen = getUnseenPublicAnnouncements();
+  if (unseen.length) markPublicAnnouncementsSeen(unseen.map((announcement) => announcement.id));
+  openDialog(dialog);
+}
+
+function closePublicAnnouncementsDialog(dialog) {
+  closeDialog(dialog);
 }
 
 function bindLeaderboardDialog() {
@@ -2007,6 +2055,29 @@ function bindLeaderboardDialog() {
     dialog.dataset.bound = "true";
     dialog.addEventListener("click", (e) => {
       if (e.target === dialog) closeLeaderboardDialog(dialog);
+    });
+  }
+}
+
+function bindPublicAnnouncementsDialog() {
+  const openBtn = document.getElementById("openPublicAnnouncementsBtn");
+  const closeBtn = document.getElementById("closePublicAnnouncementsBtn");
+  const dialog = document.getElementById("publicAnnouncementsDialog");
+
+  if (openBtn && dialog && !openBtn.dataset.bound) {
+    openBtn.dataset.bound = "true";
+    openBtn.addEventListener("click", () => openPublicAnnouncementsDialog(dialog));
+  }
+
+  if (closeBtn && dialog && !closeBtn.dataset.bound) {
+    closeBtn.dataset.bound = "true";
+    closeBtn.addEventListener("click", () => closePublicAnnouncementsDialog(dialog));
+  }
+
+  if (dialog && !dialog.dataset.bound) {
+    dialog.dataset.bound = "true";
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) closePublicAnnouncementsDialog(dialog);
     });
   }
 }
@@ -2307,41 +2378,16 @@ function renderAdminPanel() {
 }
 
 function renderPublicAnnouncementPanel(introComplete, isAdmin) {
-  const panel = document.getElementById("publicAnnouncementPanel");
-  const list = document.getElementById("publicAnnouncementList");
-  const count = document.getElementById("publicAnnouncementCount");
-  if (!panel || !list) return;
-
+  const openBtn = document.getElementById("openPublicAnnouncementsBtn");
+  const dialog = document.getElementById("publicAnnouncementsDialog");
   const canSee = Boolean(introComplete || isAdmin);
-  panel.hidden = !canSee;
-  list.innerHTML = "";
-  if (!canSee) return;
+  const announcements = canSee ? getVisiblePublicAnnouncements() : [];
 
-  const announcements = getVisiblePublicAnnouncements();
-  if (count) count.textContent = `${announcements.length} posted`;
-
-  if (!announcements.length) {
-    const empty = document.createElement("li");
-    empty.className = "hint-history-empty";
-    empty.textContent = "No public announcements have been posted yet.";
-    list.appendChild(empty);
-    return;
+  if (openBtn) {
+    openBtn.textContent = announcements.length ? `Announcements (${announcements.length})` : "Announcements";
   }
 
-  for (const announcement of announcements) {
-    const item = document.createElement("li");
-    item.className = "public-announcement-item";
-
-    const heading = document.createElement("strong");
-    heading.textContent = `Posted ${formatRequestDate(announcement.createdAt)}`;
-
-    const body = document.createElement("p");
-    body.textContent = announcement.content;
-
-    item.appendChild(heading);
-    item.appendChild(body);
-    list.appendChild(item);
-  }
+  if (dialog?.open) renderPublicAnnouncementsDialog();
 }
 
 function renderIndex() {
@@ -2780,6 +2826,7 @@ document.addEventListener("DOMContentLoaded", () => {
   ensureOverlays();
   bindAuthControls();
   bindLeaderboardDialog();
+  bindPublicAnnouncementsDialog();
 
   if (CLOUD_DATABASE_REQUIRED) showSyncGate("Loading shared cloud database…");
 
