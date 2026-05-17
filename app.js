@@ -170,7 +170,13 @@ function defaultPuzzleStats() {
 }
 
 function defaultDatabase() {
-  return { version: 1, users: {}, publicHints: [], deletedUserKeys: [...RETIRED_SEEDED_PLAYER_USER_KEYS] };
+  return {
+    version: 1,
+    users: {},
+    publicHints: [],
+    publicAnnouncements: [],
+    deletedUserKeys: [...RETIRED_SEEDED_PLAYER_USER_KEYS],
+  };
 }
 
 function loadDatabase() {
@@ -187,6 +193,7 @@ function loadDatabase() {
       version: 1,
       users: parsed.users,
       publicHints: Array.isArray(parsed.publicHints) ? parsed.publicHints : [],
+      publicAnnouncements: Array.isArray(parsed.publicAnnouncements) ? parsed.publicAnnouncements : [],
       deletedUserKeys: Array.isArray(parsed.deletedUserKeys) ? parsed.deletedUserKeys.map(usernameKey).filter(Boolean) : [],
     });
   } catch {
@@ -208,6 +215,7 @@ function saveDatabase(database, options = {}) {
     version: 1,
     users: cleanUsers,
     publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
+    publicAnnouncements: Array.isArray(database?.publicAnnouncements) ? database.publicAnnouncements : [],
     deletedUserKeys: Array.isArray(database?.deletedUserKeys) ? database.deletedUserKeys.map(usernameKey).filter(Boolean) : [],
   });
   localStorage.setItem(DATABASE_KEY, JSON.stringify(cleanDatabase));
@@ -382,6 +390,29 @@ function mergePublicHints(localHints, remoteHints) {
   return Array.from(byId.values()).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
 }
 
+function mergePublicAnnouncements(localAnnouncements, remoteAnnouncements) {
+  const byId = new Map();
+  [...(Array.isArray(localAnnouncements) ? localAnnouncements : []), ...(Array.isArray(remoteAnnouncements) ? remoteAnnouncements : [])]
+    .map(sanitizePublicAnnouncement)
+    .filter(Boolean)
+    .forEach((announcement) => {
+      const existing = byId.get(announcement.id);
+      if (!existing) {
+        byId.set(announcement.id, announcement);
+        return;
+      }
+
+      byId.set(announcement.id, {
+        ...existing,
+        ...announcement,
+        seenBy: Array.from(new Set([...(existing.seenBy || []), ...(announcement.seenBy || [])])),
+        createdAt: olderTimestamp(existing.createdAt, announcement.createdAt) || existing.createdAt || announcement.createdAt,
+      });
+    });
+
+  return Array.from(byId.values()).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+}
+
 function isFreshAccountRecord(user) {
   if (!user || typeof user !== "object") return false;
   if (!user.createdAt || !user.updatedAt) return false;
@@ -424,6 +455,7 @@ function mergeDatabases(localDatabase, remoteDatabase) {
     version: 1,
     users,
     publicHints: mergePublicHints(local.publicHints, remote.publicHints),
+    publicAnnouncements: mergePublicAnnouncements(local.publicAnnouncements, remote.publicAnnouncements),
     deletedUserKeys,
   });
 }
@@ -609,6 +641,7 @@ function retireSeededPlayerAccounts(database) {
     version: 1,
     users,
     publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
+    publicAnnouncements: Array.isArray(database?.publicAnnouncements) ? database.publicAnnouncements : [],
     deletedUserKeys,
   };
 }
@@ -1204,6 +1237,130 @@ function markHintResponsesSeen(requestIds) {
   );
   user.updatedAt = new Date().toISOString();
   saveDatabase(database);
+}
+
+
+// -------------------------
+// Public announcements
+// -------------------------
+function sanitizePublicAnnouncement(announcement) {
+  if (!announcement || typeof announcement !== "object") return null;
+
+  const content = (announcement.content ?? "").toString().trim();
+  if (!content) return null;
+
+  return {
+    id: announcement.id || `public-announcement-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    content,
+    createdAt: announcement.createdAt || new Date().toISOString(),
+    seenBy: Array.isArray(announcement.seenBy) ? announcement.seenBy.map(usernameKey).filter(Boolean) : [],
+  };
+}
+
+function getPublicAnnouncements() {
+  const database = loadDatabase();
+  return (Array.isArray(database.publicAnnouncements) ? database.publicAnnouncements : [])
+    .map(sanitizePublicAnnouncement)
+    .filter(Boolean)
+    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+}
+
+function revokePublicAnnouncement(announcementId) {
+  if (!canUseCachedDatabaseForWrites()) return { ok: false, msg: cloudUnavailableMessage("revoking public announcements") };
+  if (!isCurrentUserAdmin()) return { ok: false, msg: "Only admins can revoke public announcements." };
+
+  const database = loadDatabase();
+  const publicAnnouncements = Array.isArray(database.publicAnnouncements) ? database.publicAnnouncements : [];
+  let found = false;
+  const nextPublicAnnouncements = publicAnnouncements
+    .map(sanitizePublicAnnouncement)
+    .filter(Boolean)
+    .filter((announcement) => {
+      if (announcement.id !== announcementId) return true;
+      found = true;
+      return false;
+    });
+
+  if (!found) {
+    return { ok: false, msg: "That public announcement no longer exists." };
+  }
+
+  database.publicAnnouncements = nextPublicAnnouncements;
+  saveDatabase(database);
+  return { ok: true, msg: "Public announcement revoked." };
+}
+
+function postPublicAnnouncement(content) {
+  if (!canUseCachedDatabaseForWrites()) return { ok: false, msg: cloudUnavailableMessage("posting public announcements") };
+  if (!isCurrentUserAdmin()) return { ok: false, msg: "Only admins can post public announcements." };
+
+  const cleanContent = (content ?? "").toString().trim();
+  if (!cleanContent) return { ok: false, msg: "Write announcement content before posting." };
+
+  const database = loadDatabase();
+  const announcement = sanitizePublicAnnouncement({
+    content: cleanContent,
+    createdAt: new Date().toISOString(),
+    seenBy: [ADMIN_ACCOUNT.username],
+  });
+  if (!announcement) return { ok: false, msg: "Unable to post that public announcement." };
+
+  database.publicAnnouncements = Array.isArray(database.publicAnnouncements) ? database.publicAnnouncements : [];
+  database.publicAnnouncements.push(announcement);
+  saveDatabase(database);
+  return { ok: true, msg: "Public announcement posted." };
+}
+
+function canCurrentUserSeePublicAnnouncements() {
+  const username = getCurrentUsername();
+  if (!username) return false;
+  if (isAdminUsername(username)) return true;
+  return hasCompletedIntroduction(loadProgress());
+}
+
+function getVisiblePublicAnnouncements() {
+  return canCurrentUserSeePublicAnnouncements() ? getPublicAnnouncements() : [];
+}
+
+function getUnseenPublicAnnouncements() {
+  const username = getCurrentUsername();
+  if (!username || isAdminUsername(username) || !hasCompletedIntroduction(loadProgress())) return [];
+
+  const key = usernameKey(username);
+  return getPublicAnnouncements().filter((announcement) => !announcement.seenBy.includes(key));
+}
+
+function markPublicAnnouncementsSeen(announcementIds) {
+  const username = getCurrentUsername();
+  if (!username || isAdminUsername(username) || !announcementIds.length) return;
+
+  const database = loadDatabase();
+  const idSet = new Set(announcementIds);
+  const key = usernameKey(username);
+  database.publicAnnouncements = (Array.isArray(database.publicAnnouncements) ? database.publicAnnouncements : [])
+    .map(sanitizePublicAnnouncement)
+    .filter(Boolean)
+    .map((announcement) => {
+      if (!idSet.has(announcement.id) || announcement.seenBy.includes(key)) return announcement;
+      return { ...announcement, seenBy: [...announcement.seenBy, key] };
+    });
+  saveDatabase(database);
+}
+
+function showPendingPublicAnnouncements() {
+  const announcements = getUnseenPublicAnnouncements();
+  if (!announcements.length) return;
+
+  markPublicAnnouncementsSeen(announcements.map((announcement) => announcement.id));
+  announcements.forEach((announcement, index) => {
+    setTimeout(() => {
+      showMessageDialog(
+        "Public Announcement",
+        announcement.content,
+        `Posted ${formatRequestDate(announcement.createdAt)}`
+      );
+    }, index * 250);
+  });
 }
 
 // -------------------------
@@ -1910,6 +2067,7 @@ function renderAdminPanel() {
   const list = document.getElementById("adminUserList");
   const hintList = document.getElementById("adminHintList");
   const publicHintList = document.getElementById("adminPublicHintList");
+  const publicAnnouncementList = document.getElementById("adminPublicAnnouncementList");
   const adminPuzzleList = document.getElementById("adminPuzzleList");
   const isAdmin = isCurrentUserAdmin();
 
@@ -1917,6 +2075,7 @@ function renderAdminPanel() {
   if (list) list.innerHTML = "";
   if (hintList) hintList.innerHTML = "";
   if (publicHintList) publicHintList.innerHTML = "";
+  if (publicAnnouncementList) publicAnnouncementList.innerHTML = "";
   if (adminPuzzleList) adminPuzzleList.innerHTML = "";
   if (!isAdmin) return;
 
@@ -1929,12 +2088,14 @@ function renderAdminPanel() {
     }))
     .sort((a, b) => a.username.localeCompare(b.username));
   const publicHints = getPublicHints();
+  const publicAnnouncements = getPublicAnnouncements();
   const requests = rows.flatMap((user) => user.hintRequests.map((request) => ({ ...request, username: user.username })));
   requests.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
   const pendingCount = requests.filter((request) => request.status === "pending").length;
 
   setText("adminHintCount", `${pendingCount} pending · ${requests.length} total`);
   setText("adminPublicHintCount", `${publicHints.length} posted`);
+  setText("adminPublicAnnouncementCount", `${publicAnnouncements.length} posted`);
   setText("adminUserCount", `${rows.length} player${rows.length === 1 ? "" : "s"}`);
   setText("adminPuzzleCount", `${PUZZLES.length} pages (${MAIN_PUZZLES.length} puzzles + metapuzzle + introduction)`);
   renderPuzzleCards(adminPuzzleList, PUZZLES, new Set(loadProgress().solvedIds), true);
@@ -2033,6 +2194,43 @@ function renderAdminPanel() {
     }
   }
 
+  if (publicAnnouncementList) {
+    if (!publicAnnouncements.length) {
+      const empty = document.createElement("li");
+      empty.className = "admin-user-empty";
+      empty.textContent = "No public announcements have been posted yet.";
+      publicAnnouncementList.appendChild(empty);
+    } else {
+      for (const announcement of publicAnnouncements) {
+        const item = document.createElement("li");
+        item.className = "hint-request-row";
+
+        const title = document.createElement("strong");
+        title.textContent = "Hunt-wide public announcement";
+
+        const date = document.createElement("span");
+        date.className = "hint-status approved";
+        date.textContent = formatRequestDate(announcement.createdAt);
+
+        const content = document.createElement("p");
+        content.className = "hint-progress";
+        content.textContent = announcement.content;
+
+        const revoke = document.createElement("button");
+        revoke.className = "danger";
+        revoke.type = "button";
+        revoke.textContent = "Revoke";
+        revoke.dataset.revokePublicAnnouncement = announcement.id;
+
+        item.appendChild(title);
+        item.appendChild(date);
+        item.appendChild(content);
+        item.appendChild(revoke);
+        publicAnnouncementList.appendChild(item);
+      }
+    }
+  }
+
   if (!hintList) return;
 
   if (!requests.length) {
@@ -2108,6 +2306,44 @@ function renderAdminPanel() {
   }
 }
 
+function renderPublicAnnouncementPanel(introComplete, isAdmin) {
+  const panel = document.getElementById("publicAnnouncementPanel");
+  const list = document.getElementById("publicAnnouncementList");
+  const count = document.getElementById("publicAnnouncementCount");
+  if (!panel || !list) return;
+
+  const canSee = Boolean(introComplete || isAdmin);
+  panel.hidden = !canSee;
+  list.innerHTML = "";
+  if (!canSee) return;
+
+  const announcements = getVisiblePublicAnnouncements();
+  if (count) count.textContent = `${announcements.length} posted`;
+
+  if (!announcements.length) {
+    const empty = document.createElement("li");
+    empty.className = "hint-history-empty";
+    empty.textContent = "No public announcements have been posted yet.";
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const announcement of announcements) {
+    const item = document.createElement("li");
+    item.className = "public-announcement-item";
+
+    const heading = document.createElement("strong");
+    heading.textContent = `Posted ${formatRequestDate(announcement.createdAt)}`;
+
+    const body = document.createElement("p");
+    body.textContent = announcement.content;
+
+    item.appendChild(heading);
+    item.appendChild(body);
+    list.appendChild(item);
+  }
+}
+
 function renderIndex() {
   const authPanel = document.getElementById("authPanel");
   const huntPanel = document.getElementById("huntPanel");
@@ -2133,6 +2369,7 @@ function renderIndex() {
     if (progressEl) progressEl.textContent = "Log in to save progress";
     if (revealEl) revealEl.textContent = "A username and password are required before you can open puzzles.";
     if (listEl) listEl.innerHTML = "";
+    renderPublicAnnouncementPanel(false, false);
     return;
   }
 
@@ -2169,6 +2406,7 @@ function renderIndex() {
           : "Every hunt puzzle is solved. Congratulations!";
   }
 
+  renderPublicAnnouncementPanel(introComplete, isAdmin);
   renderPuzzleCards(listEl, visible, solvedSet, isAdmin);
 }
 
@@ -2236,6 +2474,70 @@ function showPublicHintDialog() {
   textarea.focus();
 }
 
+
+function showPublicAnnouncementDialog() {
+  const dialog = document.createElement("dialog");
+  dialog.className = "message-dialog";
+  dialog.innerHTML = `
+    <form class="message-window public-hint-form" method="dialog">
+      <div class="leaderboard-window-header">
+        <div>
+          <p class="eyebrow">Public announcement</p>
+          <h2>Post public announcement</h2>
+        </div>
+        <button class="secondary icon-button" value="cancel" type="button" aria-label="Close">×</button>
+      </div>
+      <label>
+        <span>Announcement content</span>
+        <textarea class="input hint-request-textarea" rows="7" required></textarea>
+      </label>
+      <p class="feedback" role="status" aria-live="polite"></p>
+      <div class="row">
+        <button type="submit">Post Public Announcement</button>
+        <button class="secondary" type="button">Cancel</button>
+      </div>
+    </form>
+  `;
+
+  const form = dialog.querySelector("form");
+  const textarea = dialog.querySelector("textarea");
+  const feedback = dialog.querySelector(".feedback");
+  const closeButtons = dialog.querySelectorAll('button[type="button"]');
+
+  closeButtons.forEach((button) => button.addEventListener("click", () => closeDialog(dialog)));
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog) closeDialog(dialog);
+  });
+  dialog.addEventListener("close", () => dialog.remove());
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const res = postPublicAnnouncement(textarea.value);
+    if (!res.ok) {
+      setFeedback(feedback, false, res.msg);
+      return;
+    }
+
+    closeDialog(dialog);
+    renderIndex();
+    showNotification(res.msg, "ok");
+  });
+
+  document.body.appendChild(dialog);
+  openDialog(dialog);
+  textarea.focus();
+}
+
+function bindAdminPublicAnnouncementButton() {
+  const button = document.getElementById("postPublicAnnouncementBtn");
+  if (!button || button.dataset.bound) return;
+
+  button.dataset.bound = "true";
+  button.addEventListener("click", () => {
+    if (!isCurrentUserAdmin()) return;
+    showPublicAnnouncementDialog();
+  });
+}
+
 function bindAdminPublicHintButton() {
   const button = document.getElementById("postPublicHintBtn");
   if (!button || button.dataset.bound) return;
@@ -2251,6 +2553,7 @@ function bindAdminWindowControls() {
   const windowButtons = [
     ["openAdminHintsBtn", "adminHintsDialog"],
     ["openAdminPublicHintsBtn", "adminPublicHintsDialog"],
+    ["openAdminPublicAnnouncementsBtn", "adminPublicAnnouncementsDialog"],
     ["openAdminUsersBtn", "adminUsersDialog"],
     ["openAdminPuzzlesBtn", "adminPuzzlesDialog"],
   ];
@@ -2292,7 +2595,9 @@ function bindAuthControls() {
   const feedbackEl = document.getElementById("authFeedback");
   const adminUserList = document.getElementById("adminUserList");
   const adminPublicHintList = document.getElementById("adminPublicHintList");
+  const adminPublicAnnouncementList = document.getElementById("adminPublicAnnouncementList");
   bindAdminPublicHintButton();
+  bindAdminPublicAnnouncementButton();
   bindAdminWindowControls();
 
   async function runAuth(action) {
@@ -2318,6 +2623,7 @@ function bindAuthControls() {
         }
         showPendingHintResponses();
         showPendingPublicHints();
+        showPendingPublicAnnouncements();
       }
     } catch (error) {
       console.warn(error?.message || "Authentication failed unexpectedly.");
@@ -2368,6 +2674,21 @@ function bindAuthControls() {
       if (!confirm("Revoke this public hint/clarification? Players will no longer see it.")) return;
 
       const res = revokePublicHint(button.dataset.revokePublicHint);
+      renderIndex();
+      showNotification(res.msg, res.ok ? "ok" : "info");
+    });
+  }
+
+
+  if (adminPublicAnnouncementList && !adminPublicAnnouncementList.dataset.bound) {
+    adminPublicAnnouncementList.dataset.bound = "true";
+    adminPublicAnnouncementList.addEventListener("click", (e) => {
+      const button = e.target.closest("[data-revoke-public-announcement]");
+      if (!button || !isCurrentUserAdmin()) return;
+
+      if (!confirm("Revoke this public announcement? Players will no longer see it.")) return;
+
+      const res = revokePublicAnnouncement(button.dataset.revokePublicAnnouncement);
       renderIndex();
       showNotification(res.msg, res.ok ? "ok" : "info");
     });
@@ -2449,6 +2770,7 @@ window.addEventListener("storage", (event) => {
   showQueuedSolveNotification();
   showPendingHintResponses();
   showPendingPublicHints();
+  showPendingPublicAnnouncements();
   const puzzleId = Number(document.body.dataset.puzzleId);
   if (puzzleId) renderPuzzleHintPanel(puzzleId);
   if (isCurrentUserAdmin()) renderAdminPanel();
@@ -2472,6 +2794,7 @@ document.addEventListener("DOMContentLoaded", () => {
     showQueuedSolveNotification();
     showPendingHintResponses();
     showPendingPublicHints();
+    showPendingPublicAnnouncements();
   });
 
   if (document.getElementById("adminPanel")) {
@@ -2483,6 +2806,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(() => {
     showPendingHintResponses();
     showPendingPublicHints();
+    showPendingPublicAnnouncements();
     const puzzleHintPanel = document.getElementById("puzzleHintPanel");
     const puzzleId = Number(document.body.dataset.puzzleId);
     if (puzzleHintPanel && puzzleId) renderPuzzleHintPanel(puzzleId);
@@ -2493,6 +2817,7 @@ document.addEventListener("DOMContentLoaded", () => {
       syncDatabaseFromRemote().then((synced) => {
         if (!synced) return;
         renderIndex();
+        showPendingPublicAnnouncements();
         const puzzleId = Number(document.body.dataset.puzzleId);
         if (puzzleId) renderPuzzleHintPanel(puzzleId);
       });

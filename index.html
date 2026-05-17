@@ -72,9 +72,14 @@
           <span id="adminHintCount">0 total</span>
         </button>
         <button id="openAdminPublicHintsBtn" class="admin-window-card" type="button" aria-haspopup="dialog" aria-controls="adminPublicHintsDialog">
-          <span class="admin-window-eyebrow">Broadcasts</span>
+          <span class="admin-window-eyebrow">Puzzle broadcasts</span>
           <strong>Public hints/clarifications</strong>
           <span id="adminPublicHintCount">0 posted</span>
+        </button>
+        <button id="openAdminPublicAnnouncementsBtn" class="admin-window-card" type="button" aria-haspopup="dialog" aria-controls="adminPublicAnnouncementsDialog">
+          <span class="admin-window-eyebrow">Hunt broadcasts</span>
+          <strong>Public announcements</strong>
+          <span id="adminPublicAnnouncementCount">0 posted</span>
         </button>
         <button id="openAdminUsersBtn" class="admin-window-card" type="button" aria-haspopup="dialog" aria-controls="adminUsersDialog">
           <span class="admin-window-eyebrow">Accounts</span>
@@ -120,6 +125,23 @@
       </div>
     </dialog>
 
+    <dialog id="adminPublicAnnouncementsDialog" class="admin-dialog" aria-labelledby="adminPublicAnnouncementsTitle">
+      <div class="admin-window">
+        <div class="admin-window-header">
+          <div>
+            <p class="eyebrow">Admin window</p>
+            <h2 id="adminPublicAnnouncementsTitle">Public announcements</h2>
+          </div>
+          <button class="secondary icon-button" type="button" data-close-dialog="adminPublicAnnouncementsDialog" aria-label="Close public announcements">×</button>
+        </div>
+        <p class="muted admin-window-copy">Post hunt-wide public announcements and review the existing announcement history here.</p>
+        <div class="row admin-heading-actions">
+          <button id="postPublicAnnouncementBtn" type="button">Post Public Announcement</button>
+        </div>
+        <ul id="adminPublicAnnouncementList" class="admin-user-list public-announcement-list"></ul>
+      </div>
+    </dialog>
+
     <dialog id="adminUsersDialog" class="admin-dialog" aria-labelledby="adminUsersTitle">
       <div class="admin-window">
         <div class="admin-window-header">
@@ -156,6 +178,17 @@
         </div>
         <p class="muted">Future cells stay hidden until the current puzzle is solved.</p>
       </div>
+      <section id="publicAnnouncementPanel" class="public-announcement-panel" aria-labelledby="publicAnnouncementTitle" hidden>
+        <div class="public-announcement-heading">
+          <div>
+            <p class="eyebrow">Hunt broadcasts</p>
+            <h3 id="publicAnnouncementTitle">Public announcements</h3>
+          </div>
+          <span id="publicAnnouncementCount" class="hint-status approved">0 posted</span>
+        </div>
+        <p class="muted">Announcements appear here after you complete the introduction.</p>
+        <ul id="publicAnnouncementList" class="hint-history-list public-announcement-history"></ul>
+      </section>
       <ul id="puzzleList" class="gallery"></ul>
     </section>
 
