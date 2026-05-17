@@ -1,6 +1,14 @@
 const DATABASE_KEY = "database";
 const RETIRED_SEEDED_PLAYER_USER_KEYS = ["easoneason"];
-const EMPTY_DATABASE = { version: 1, users: {}, publicHints: [], deletedUserKeys: [...RETIRED_SEEDED_PLAYER_USER_KEYS] };
+const EMPTY_DATABASE = {
+  version: 1,
+  users: {},
+  publicHints: [],
+  publicAnnouncements: [],
+  deletedUserKeys: [...RETIRED_SEEDED_PLAYER_USER_KEYS],
+  deletedPublicHintIds: [],
+  deletedPublicAnnouncementIds: [],
+};
 const PREFERRED_DATABASE_BINDINGS = [
   "PUZZLE_HUNT_D1",
   "PUZZLEHUNT_D1",
@@ -128,6 +136,10 @@ function userKey(value) {
   return value?.toString().trim().toLowerCase() || "";
 }
 
+function itemIdKey(value) {
+  return value?.toString().trim() || "";
+}
+
 function cleanDatabase(database) {
   const retiredKeys = new Set(RETIRED_SEEDED_PLAYER_USER_KEYS);
   const sourceUsers = database?.users && typeof database.users === "object" ? database.users : {};
@@ -138,15 +150,32 @@ function cleanDatabase(database) {
     users[key] = user;
   }
 
+  const deletedPublicHintIds = Array.from(new Set(
+    (Array.isArray(database?.deletedPublicHintIds) ? database.deletedPublicHintIds : [])
+      .map(itemIdKey)
+      .filter(Boolean)
+  ));
+  const deletedPublicAnnouncementIds = Array.from(new Set(
+    (Array.isArray(database?.deletedPublicAnnouncementIds) ? database.deletedPublicAnnouncementIds : [])
+      .map(itemIdKey)
+      .filter(Boolean)
+  ));
+  const deletedPublicHintSet = new Set(deletedPublicHintIds);
+  const deletedPublicAnnouncementSet = new Set(deletedPublicAnnouncementIds);
+
   return {
     version: 1,
     users,
-    publicHints: Array.isArray(database?.publicHints) ? database.publicHints : [],
-    publicAnnouncements: Array.isArray(database?.publicAnnouncements) ? database.publicAnnouncements : [],
+    publicHints: (Array.isArray(database?.publicHints) ? database.publicHints : [])
+      .filter((hint) => !deletedPublicHintSet.has(itemIdKey(hint?.id))),
+    publicAnnouncements: (Array.isArray(database?.publicAnnouncements) ? database.publicAnnouncements : [])
+      .filter((announcement) => !deletedPublicAnnouncementSet.has(itemIdKey(announcement?.id))),
     deletedUserKeys: Array.from(new Set([
       ...(Array.isArray(database?.deletedUserKeys) ? database.deletedUserKeys : []),
       ...RETIRED_SEEDED_PLAYER_USER_KEYS,
     ].map(userKey).filter(Boolean))),
+    deletedPublicHintIds,
+    deletedPublicAnnouncementIds,
   };
 }
 
@@ -255,22 +284,32 @@ function mergeUser(localUser, incomingUser) {
   };
 }
 
-function mergePublicHints(localHints, incomingHints) {
-  return mergeArrayById(localHints, incomingHints, (local, incoming) => ({
-    ...local,
-    ...incoming,
-    seenBy: Array.from(new Set([...(local.seenBy || []), ...(incoming.seenBy || [])])),
-    createdAt: olderTimestamp(local.createdAt, incoming.createdAt) || local.createdAt || incoming.createdAt,
-  }));
+function mergePublicHints(localHints, incomingHints, deletedHintIds = []) {
+  const deletedSet = new Set((Array.isArray(deletedHintIds) ? deletedHintIds : []).map(itemIdKey).filter(Boolean));
+  return mergeArrayById(
+    (Array.isArray(localHints) ? localHints : []).filter((hint) => !deletedSet.has(itemIdKey(hint?.id))),
+    (Array.isArray(incomingHints) ? incomingHints : []).filter((hint) => !deletedSet.has(itemIdKey(hint?.id))),
+    (local, incoming) => ({
+      ...local,
+      ...incoming,
+      seenBy: Array.from(new Set([...(local.seenBy || []), ...(incoming.seenBy || [])])),
+      createdAt: olderTimestamp(local.createdAt, incoming.createdAt) || local.createdAt || incoming.createdAt,
+    })
+  );
 }
 
-function mergePublicAnnouncements(localAnnouncements, incomingAnnouncements) {
-  return mergeArrayById(localAnnouncements, incomingAnnouncements, (local, incoming) => ({
-    ...local,
-    ...incoming,
-    seenBy: Array.from(new Set([...(local.seenBy || []), ...(incoming.seenBy || [])])),
-    createdAt: olderTimestamp(local.createdAt, incoming.createdAt) || local.createdAt || incoming.createdAt,
-  }));
+function mergePublicAnnouncements(localAnnouncements, incomingAnnouncements, deletedAnnouncementIds = []) {
+  const deletedSet = new Set((Array.isArray(deletedAnnouncementIds) ? deletedAnnouncementIds : []).map(itemIdKey).filter(Boolean));
+  return mergeArrayById(
+    (Array.isArray(localAnnouncements) ? localAnnouncements : []).filter((announcement) => !deletedSet.has(itemIdKey(announcement?.id))),
+    (Array.isArray(incomingAnnouncements) ? incomingAnnouncements : []).filter((announcement) => !deletedSet.has(itemIdKey(announcement?.id))),
+    (local, incoming) => ({
+      ...local,
+      ...incoming,
+      seenBy: Array.from(new Set([...(local.seenBy || []), ...(incoming.seenBy || [])])),
+      createdAt: olderTimestamp(local.createdAt, incoming.createdAt) || local.createdAt || incoming.createdAt,
+    })
+  );
 }
 
 function isFreshAccountRecord(user) {
@@ -284,6 +323,14 @@ function mergeDatabases(localDatabase, incomingDatabase) {
   const incoming = cleanDatabase(incomingDatabase);
   const localDeleted = local.deletedUserKeys.map((key) => key?.toString().trim().toLowerCase()).filter(Boolean);
   const incomingDeleted = incoming.deletedUserKeys.map((key) => key?.toString().trim().toLowerCase()).filter(Boolean);
+  const deletedPublicHintIds = Array.from(new Set([
+    ...local.deletedPublicHintIds,
+    ...incoming.deletedPublicHintIds,
+  ].map(itemIdKey).filter(Boolean)));
+  const deletedPublicAnnouncementIds = Array.from(new Set([
+    ...local.deletedPublicAnnouncementIds,
+    ...incoming.deletedPublicAnnouncementIds,
+  ].map(itemIdKey).filter(Boolean)));
   const keys = new Set([...Object.keys(local.users), ...Object.keys(incoming.users)]);
   const revivedKeys = new Set();
 
@@ -312,9 +359,11 @@ function mergeDatabases(localDatabase, incomingDatabase) {
   return {
     version: 1,
     users,
-    publicHints: mergePublicHints(local.publicHints, incoming.publicHints),
-    publicAnnouncements: mergePublicAnnouncements(local.publicAnnouncements, incoming.publicAnnouncements),
+    publicHints: mergePublicHints(local.publicHints, incoming.publicHints, deletedPublicHintIds),
+    publicAnnouncements: mergePublicAnnouncements(local.publicAnnouncements, incoming.publicAnnouncements, deletedPublicAnnouncementIds),
     deletedUserKeys,
+    deletedPublicHintIds,
+    deletedPublicAnnouncementIds,
   };
 }
 
