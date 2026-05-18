@@ -35,6 +35,7 @@ const RETIRED_SEEDED_PLAYER_USER_KEYS = ["easoneason"];
 const HINT_EMAIL = "easond29@lakesideschool.org";
 const HINT_EMAIL_ENDPOINT = `https://formsubmit.co/ajax/${HINT_EMAIL}`;
 const SOLVE_NOTIFICATION_KEY = "puzzle_hunt_solve_notification_v1";
+const META_REACHED_NOTIFICATION_KEY = "puzzle_hunt_meta_reached_notification_v1";
 // Use a real shared sync endpoint for multiplayer accounts/progress.
 // Configure DEFAULT_SYNC_ENDPOINT once here (or set window.PUZZLE_HUNT_SYNC_ENDPOINT
 // before app.js loads) so index.html and every puzzle page talk to the same database.
@@ -142,16 +143,48 @@ function showNotification(message, type = "ok") {
   }, 3600);
 }
 
-function queueSolveNotification(message) {
-  sessionStorage.setItem(SOLVE_NOTIFICATION_KEY, message);
+function queueSolveNotification(message, type = "ok") {
+  sessionStorage.setItem(SOLVE_NOTIFICATION_KEY, JSON.stringify({ message, type }));
 }
 
 function showQueuedSolveNotification() {
-  const message = sessionStorage.getItem(SOLVE_NOTIFICATION_KEY);
-  if (!message) return;
+  const raw = sessionStorage.getItem(SOLVE_NOTIFICATION_KEY);
+  if (!raw) return;
 
   sessionStorage.removeItem(SOLVE_NOTIFICATION_KEY);
-  showNotification(message, "ok");
+
+  try {
+    const queued = JSON.parse(raw);
+    showNotification(queued.message || raw, queued.type || "ok");
+  } catch {
+    showNotification(raw, "ok");
+  }
+}
+
+function metaReachedNotificationStorageKey(username = getCurrentUsername()) {
+  const key = usernameKey(username || "guest");
+  return `${META_REACHED_NOTIFICATION_KEY}:${key}`;
+}
+
+function markMetaReachedNotificationSeen(username = getCurrentUsername()) {
+  localStorage.setItem(metaReachedNotificationStorageKey(username), "1");
+}
+
+function maybeShowMetaReachedNotification(progress = loadProgress()) {
+  const username = getCurrentUsername();
+  if (!username || isAdminUsername(username)) return;
+
+  const cleanProgress = sanitizeProgress(progress);
+  const solvedSet = new Set(cleanProgress.solvedIds);
+  const metaPuzzle = HUNT_PUZZLES[HUNT_PUZZLES.length - 1];
+  const metaIsAvailable = cleanProgress.unlockedUpTo >= metaPuzzle.id && !solvedSet.has(metaPuzzle.id);
+  if (!metaIsAvailable) return;
+
+  const key = metaReachedNotificationStorageKey(username);
+  if (localStorage.getItem(key)) return;
+
+  localStorage.setItem(key, "1");
+  showNotification("🎯 Metapuzzle unlocked! The final challenge is now waiting for you.", "meta");
 }
 
 // -------------------------
@@ -1058,6 +1091,7 @@ function getLeaderboard() {
         username: user.username,
         solvedCount: progress.solvedIds.filter((id) => id !== INTRODUCTION_PUZZLE.id).length,
         rankSolvedAt: leaderboardSolveTime(progress, user),
+        finished: HUNT_PUZZLES.every((puzzle) => progress.solvedIds.includes(puzzle.id)),
       };
     })
     .sort((a, b) => {
@@ -1715,12 +1749,18 @@ async function submitAnswer(puzzleId, inputValue) {
 
     const isIntroduction = puzzleId === INTRODUCTION_PUZZLE.id;
     const isLast = puzzleId === HUNT_PUZZLES[HUNT_PUZZLES.length - 1].id;
+    const nextHuntPuzzle = HUNT_PUZZLES.find((candidate) => candidate.id === puzzleId + 1);
+    const metapuzzleUnlocked = nextHuntPuzzle?.kind === "Meta";
     const msg = isLast
       ? "Correct! Hunt complete ✨"
       : isIntroduction
         ? "Correct! Puzzle 1 is unlocked ✨"
-        : "Correct! The next puzzle is unlocked ✨";
-    queueSolveNotification(msg);
+        : metapuzzleUnlocked
+          ? "Correct! Metapuzzle unlocked — the final challenge is waiting! 🎯"
+          : "Correct! The next puzzle is unlocked ✨";
+    const notificationType = metapuzzleUnlocked ? "meta" : "ok";
+    if (metapuzzleUnlocked) markMetaReachedNotificationSeen(username);
+    queueSolveNotification(msg, notificationType);
     return {
       ok: true,
       msg,
@@ -1766,22 +1806,36 @@ function renderLeaderboard() {
     return;
   }
 
-  for (const player of rows) {
+  rows.forEach((player, index) => {
     const item = document.createElement("li");
-    item.className = "leaderboard-row";
+    item.className = "leaderboard-row" + (player.finished ? " leaderboard-row-finished" : "");
 
     const name = document.createElement("span");
     name.className = "leaderboard-name";
     name.textContent = player.username;
 
+    if (player.finished && index < 3) {
+      const podium = [
+        { medal: "🥇", place: "1st", label: "Gold" },
+        { medal: "🥈", place: "2nd", label: "Silver" },
+        { medal: "🥉", place: "3rd", label: "Bronze" },
+      ][index];
+      const medal = document.createElement("span");
+      medal.className = `leaderboard-medal leaderboard-medal-${podium.place.toLowerCase()}`;
+      medal.textContent = `${podium.medal} ${podium.label} · ${podium.place}`;
+      name.appendChild(medal);
+    }
+
     const score = document.createElement("span");
     score.className = "leaderboard-score";
-    score.textContent = `${player.solvedCount} / ${HUNT_PUZZLES.length} puzzle pages solved`;
+    score.textContent = player.finished
+      ? `Finished hunt · ${player.solvedCount} / ${HUNT_PUZZLES.length} solved`
+      : `${player.solvedCount} / ${HUNT_PUZZLES.length} puzzle pages solved`;
 
     item.appendChild(name);
     item.appendChild(score);
     leaderboardEl.appendChild(item);
-  }
+  });
 }
 
 function renderPublicAnnouncementsDialog() {
@@ -2498,6 +2552,7 @@ function renderIndex() {
 
   renderPublicAnnouncementPanel(introComplete, isAdmin);
   renderPuzzleCards(listEl, visible, solvedSet, isAdmin);
+  maybeShowMetaReachedNotification(progress);
 }
 
 function showPublicHintDialog() {
