@@ -1752,12 +1752,12 @@ async function submitAnswer(puzzleId, inputValue) {
     const nextHuntPuzzle = HUNT_PUZZLES.find((candidate) => candidate.id === puzzleId + 1);
     const metapuzzleUnlocked = nextHuntPuzzle?.kind === "Meta";
     const msg = isLast
-      ? "Correct! Hunt complete ✨"
+      ? "Correct! Puzzle hunt complete; congratulations!"
       : isIntroduction
-        ? "Correct! Puzzle 1 is unlocked ✨"
+        ? "Well done! Puzzle 1 is unlocked, good luck!"
         : metapuzzleUnlocked
-          ? "Correct! Metapuzzle unlocked — the final challenge is waiting! 🎯"
-          : "Correct! The next puzzle is unlocked ✨";
+          ? "Correct! METAPUZZLE unlocked!"
+          : "Correct! The next puzzle is unlocked.";
     const notificationType = metapuzzleUnlocked ? "meta" : "ok";
     if (metapuzzleUnlocked) markMetaReachedNotificationSeen(username);
     queueSolveNotification(msg, notificationType);
@@ -1801,7 +1801,7 @@ function renderLeaderboard() {
   if (!rows.length) {
     const empty = document.createElement("li");
     empty.className = "leaderboard-empty";
-    empty.textContent = "No players yet. Create an account to claim the first spot.";
+    empty.textContent = "No players yet.";
     leaderboardEl.appendChild(empty);
     return;
   }
@@ -1996,7 +1996,7 @@ function renderPuzzleHintPanel(puzzleId) {
     const empty = document.createElement("p");
     empty.className = "hint-history-empty";
     empty.textContent = requests.length
-      ? "No approved hints for this puzzle yet. Approved and public hints will stay here after their popups are closed."
+      ? "No approved hints for this puzzle yet. Approved and public hints will be shown here."
       : "Approved and public hints for this puzzle will appear here when available.";
     panel.appendChild(empty);
     return;
@@ -2211,7 +2211,7 @@ function renderPuzzleCards(listEl, puzzles, solvedSet, isAdmin) {
 
     const label = document.createElement("p");
     label.className = "card-label";
-    label.textContent = p.kind === "Meta" ? "Final metapuzzle" : p.kind === "Introduction" ? "Required onboarding puzzle" : "Main hunt puzzle";
+    label.textContent = p.kind === "Meta" ? "Final metapuzzle" : p.kind === "Introduction" ? "Required introduction" : "Main hunt puzzle";
 
     const badge = document.createElement("span");
     badge.className = "badge " + (solved ? "solved" : "unlocked");
