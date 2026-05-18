@@ -15,9 +15,9 @@
   <header class="hero">
     <div class="container hero-grid">
       <div>
-        <p class="eyebrow">Sequential puzzle hunt</p>
-        <h1>Puzzle Hunt</h1>
-        <p class="muted hero-copy">Create an account or log back in to save your progress, solve each rectangular puzzle card, and climb the leaderboard.</p>
+        <p class="eyebrow">2026 Puzzle Hunt</p>
+        <h1>Puzzle Dashboard</h1>
+        <p class="muted hero-copy">Welcome to Eason's 2026 Puzzle Hunt! This page is your dashboard, where you will find all your puzzles, the Leaderboard, and Public Announcements! Click into puzzle cells to view puzzles and submit answers. If you have any questions, feel free to email Eason at easond29@lakesideschool.org. Happy solving!</p>
       </div>
       <aside class="status-panel" aria-label="Hunt progress">
         <p id="accountText" class="account-status"></p>
@@ -38,7 +38,7 @@
       <div>
         <p class="eyebrow">Player account</p>
         <h2 id="authTitle">Log in to play</h2>
-        <p class="muted">Progress, solved puzzles, and leaderboard entries are stored in the shared hunt database under your puzzle hunt username and password, not under your Google account.</p>
+        <p class="muted">Progress will be saved to your account; you can log in from different devices. Please only create one account.</p>
       </div>
 
       <form id="authForm" class="auth-form">
@@ -177,7 +177,7 @@
           <p class="eyebrow">Puzzle board</p>
           <h2>Available puzzles</h2>
         </div>
-        <p class="muted">Future cells stay hidden until the current puzzle is solved.</p>
+        <p class="muted">Future puzzles stay hidden until the current puzzle is solved.</p>
       </div>
       <ul id="puzzleList" class="gallery"></ul>
     </section>
@@ -206,7 +206,7 @@
           </div>
           <button id="closeLeaderboardBtn" class="secondary icon-button" type="button" aria-label="Close leaderboard">×</button>
         </div>
-        <p class="muted leaderboard-window-copy">Ranked by number of solved puzzles, displayed by username.</p>
+        <p class="muted leaderboard-window-copy">Ranked by number of solved puzzles, displayed by chronological order.</p>
         <ol id="leaderboardList" class="leaderboard"></ol>
       </div>
     </dialog>
