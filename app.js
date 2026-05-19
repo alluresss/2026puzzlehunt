@@ -38,6 +38,7 @@ const SOLVE_NOTIFICATION_KEY = "puzzle_hunt_solve_notification_v1";
 const META_REACHED_NOTIFICATION_KEY = "puzzle_hunt_meta_reached_notification_v1";
 const LOCAL_SEEN_PUBLIC_HINTS_KEY = "puzzle_hunt_local_seen_public_hints_v1";
 const LOCAL_SEEN_PUBLIC_ANNOUNCEMENTS_KEY = "puzzle_hunt_local_seen_public_announcements_v1";
+const INCORRECT_ANSWER_GRACE_MS = 2 * 60 * 1000;
 // Use a real shared sync endpoint for multiplayer accounts/progress.
 // Configure DEFAULT_SYNC_ENDPOINT once here (or set window.PUZZLE_HUNT_SYNC_ENDPOINT
 // before app.js loads) so index.html and every puzzle page talk to the same database.
@@ -223,7 +224,7 @@ function maybeShowMetaReachedNotification(progress = loadProgress()) {
 // Account database helpers
 // -------------------------
 function defaultProgress() {
-  return { unlockedUpTo: 0, solvedIds: [], solvedAtById: {} };
+  return { unlockedUpTo: 0, solvedIds: [], solvedAtById: {}, incorrectGraceUntilById: {} };
 }
 
 function defaultHintRequests() {
@@ -822,6 +823,9 @@ function sanitizeProgress(progress) {
   const solvedAtById = progress.solvedAtById && typeof progress.solvedAtById === "object"
     ? progress.solvedAtById
     : {};
+  const incorrectGraceUntilById = progress.incorrectGraceUntilById && typeof progress.incorrectGraceUntilById === "object"
+    ? progress.incorrectGraceUntilById
+    : {};
 
   if (!Number.isFinite(unlockedUpTo) || unlockedUpTo < 0) return fallback;
 
@@ -845,6 +849,11 @@ function sanitizeProgress(progress) {
     unlockedUpTo: Math.min(unlockedUpTo, MAX_PUZZLE_ID + 1),
     solvedIds: Array.from(solvedSet),
     solvedAtById: cleanSolvedAtById,
+    incorrectGraceUntilById: Object.fromEntries(
+      Object.entries(incorrectGraceUntilById)
+        .map(([key, value]) => [String(Number(key)), Number(value)])
+        .filter(([key, value]) => Number.isFinite(Number(key)) && Number.isFinite(value) && value > 0)
+    ),
   };
 }
 
@@ -1352,7 +1361,7 @@ function sanitizePublicAnnouncement(announcement) {
   if (!content) return null;
 
   return {
-    id: announcement.id || `public-announcement-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    id: announcement.id || buildFallbackItemId(`public-announcement|${content}|${announcement.createdAt || ""}`),
     content,
     createdAt: announcement.createdAt || new Date().toISOString(),
     seenBy: Array.isArray(announcement.seenBy) ? announcement.seenBy.map(usernameKey).filter(Boolean) : [],
@@ -1485,7 +1494,7 @@ function sanitizePublicHint(hint) {
   if (!content) return null;
 
   return {
-    id: hint.id || `public-hint-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    id: hint.id || buildFallbackItemId(`public-hint|${puzzleId}|${content}|${hint.createdAt || ""}`),
     puzzleId,
     puzzleTitle: hint.puzzleTitle || puzzle.title,
     content,
@@ -1757,13 +1766,19 @@ async function submitAnswer(puzzleId, inputValue) {
 
   const guess = normalizeAnswer(inputValue);
   const puzzle = PUZZLES.find((p) => p.id === puzzleId);
+  const progress = loadProgress();
+  const graceUntil = Number(progress.incorrectGraceUntilById?.[String(puzzleId)] || 0);
+  const nowMs = Date.now();
 
   if (!puzzle) return { ok: false, msg: "Puzzle not found." };
   if (!guess) return { ok: false, msg: "Type an answer first." };
+  if (graceUntil > nowMs) {
+    const waitSeconds = Math.max(1, Math.ceil((graceUntil - nowMs) / 1000));
+    return { ok: false, msg: `Incorrect answer cooldown active. Please wait ${waitSeconds} seconds before trying again.` };
+  }
 
   if (guess === normalizeAnswer(puzzle.answer)) {
     const databaseBeforeSave = loadDatabase();
-    const progress = loadProgress();
     const solved = new Set(progress.solvedIds);
     solved.add(puzzleId);
 
@@ -1772,6 +1787,9 @@ async function submitAnswer(puzzleId, inputValue) {
       ...(progress.solvedAtById || {}),
       [String(puzzleId)]: new Date().toISOString(),
     };
+    const nextGraceById = { ...(progress.incorrectGraceUntilById || {}) };
+    delete nextGraceById[String(puzzleId)];
+    progress.incorrectGraceUntilById = nextGraceById;
     progress.unlockedUpTo = Math.max(progress.unlockedUpTo, puzzleId + 1);
     if (!saveProgress(progress)) {
       return { ok: false, msg: cloudUnavailableMessage("submitting answers") };
@@ -1805,7 +1823,18 @@ async function submitAnswer(puzzleId, inputValue) {
     };
   }
 
-  return { ok: false, msg: "Not quite — try again." };
+  progress.incorrectGraceUntilById = {
+    ...(progress.incorrectGraceUntilById || {}),
+    [String(puzzleId)]: nowMs + INCORRECT_ANSWER_GRACE_MS,
+  };
+  if (!saveProgress(progress)) {
+    return { ok: false, msg: cloudUnavailableMessage("submitting answers") };
+  }
+  const savedRemotely = remoteDatabaseUrl() ? await flushRemoteDatabasePush() : true;
+  if (remoteDatabaseUrl() && CLOUD_DATABASE_REQUIRED && !savedRemotely) {
+    return { ok: false, msg: cloudUnavailableMessage("submitting answers") };
+  }
+  return { ok: false, msg: "Not quite — try again. You can submit another answer in 2 minutes." };
 }
 
 function getPuzzleState(puzzleId) {
