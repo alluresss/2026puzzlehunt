@@ -1430,7 +1430,7 @@ function revokePublicAnnouncement(announcementId) {
   return { ok: true, msg: "Public announcement revoked." };
 }
 
-function postPublicAnnouncement(content) {
+async function postPublicAnnouncement(content) {
   if (!canUseCachedDatabaseForWrites()) return { ok: false, msg: cloudUnavailableMessage("posting public announcements") };
   if (!isCurrentUserAdmin()) return { ok: false, msg: "Only admins can post public announcements." };
 
@@ -1448,6 +1448,18 @@ function postPublicAnnouncement(content) {
   database.publicAnnouncements = Array.isArray(database.publicAnnouncements) ? database.publicAnnouncements : [];
   database.publicAnnouncements.push(announcement);
   saveDatabase(database);
+
+  const synced = await flushRemoteDatabasePush(database);
+  if (!synced) {
+    const rollbackDatabase = loadDatabase();
+    rollbackDatabase.publicAnnouncements = (Array.isArray(rollbackDatabase.publicAnnouncements) ? rollbackDatabase.publicAnnouncements : [])
+      .map(sanitizePublicAnnouncement)
+      .filter(Boolean)
+      .filter((item) => item.id !== announcement.id);
+    saveDatabase(rollbackDatabase, { skipRemote: true });
+    return { ok: false, msg: cloudUnavailableMessage("posting public announcements") };
+  }
+
   return { ok: true, msg: "Public announcement posted." };
 }
 
@@ -2772,17 +2784,25 @@ function showPublicAnnouncementDialog() {
     if (e.target === dialog) closeDialog(dialog);
   });
   dialog.addEventListener("close", () => dialog.remove());
-  form.addEventListener("submit", (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const res = postPublicAnnouncement(textarea.value);
-    if (!res.ok) {
-      setFeedback(feedback, false, res.msg);
-      return;
-    }
+    const submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton) submitButton.disabled = true;
+    setFeedback(feedback, true, "Posting public announcement to all participants…");
 
-    closeDialog(dialog);
-    renderIndex();
-    showNotification(res.msg, "ok");
+    try {
+      const res = await postPublicAnnouncement(textarea.value);
+      if (!res.ok) {
+        setFeedback(feedback, false, res.msg);
+        return;
+      }
+
+      closeDialog(dialog);
+      renderIndex();
+      showNotification(res.msg, "ok");
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
   });
 
   document.body.appendChild(dialog);
