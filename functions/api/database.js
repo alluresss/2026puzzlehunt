@@ -202,6 +202,7 @@ function mergeProgress(localProgress = {}, incomingProgress = {}) {
   const incomingSolved = Array.isArray(incomingProgress.solvedIds) ? incomingProgress.solvedIds : [];
   const solvedIds = Array.from(new Set([...localSolved, ...incomingSolved].map(Number).filter(Number.isFinite)));
   const solvedAtById = {};
+  const incorrectGraceUntilById = {};
 
   for (const id of solvedIds) {
     const key = String(id);
@@ -211,10 +212,25 @@ function mergeProgress(localProgress = {}, incomingProgress = {}) {
       || new Date().toISOString();
   }
 
+  const gracePuzzleIds = new Set([
+    ...Object.keys(localProgress.incorrectGraceUntilById || {}),
+    ...Object.keys(incomingProgress.incorrectGraceUntilById || {}),
+  ]);
+  for (const puzzleId of gracePuzzleIds) {
+    const key = String(Number(puzzleId));
+    const localGraceUntil = Number(localProgress.incorrectGraceUntilById?.[key] || 0);
+    const incomingGraceUntil = Number(incomingProgress.incorrectGraceUntilById?.[key] || 0);
+    const graceUntil = Math.max(localGraceUntil, incomingGraceUntil);
+    if (Number.isFinite(Number(key)) && graceUntil > 0) {
+      incorrectGraceUntilById[key] = graceUntil;
+    }
+  }
+
   return {
     unlockedUpTo: Math.max(Number(localProgress.unlockedUpTo) || 0, Number(incomingProgress.unlockedUpTo) || 0),
     solvedIds,
     solvedAtById,
+    incorrectGraceUntilById,
   };
 }
 
