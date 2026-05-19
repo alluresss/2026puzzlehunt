@@ -303,6 +303,10 @@ function remoteDatabaseUrl() {
   return SYNC_ENDPOINT ? `${SYNC_ENDPOINT}/database` : "";
 }
 
+function announcementsApiUrl() {
+  return SYNC_ENDPOINT ? `${SYNC_ENDPOINT}/announcements` : "";
+}
+
 function cloudDatabaseStatus() {
   if (!remoteDatabaseUrl()) {
     return {
@@ -1437,30 +1441,36 @@ async function postPublicAnnouncement(content) {
   const cleanContent = (content ?? "").toString().trim();
   if (!cleanContent) return { ok: false, msg: "Write announcement content before posting." };
 
-  const database = loadDatabase();
-  const announcement = sanitizePublicAnnouncement({
-    content: cleanContent,
-    createdAt: new Date().toISOString(),
-    seenBy: [ADMIN_ACCOUNT.username],
-  });
-  if (!announcement) return { ok: false, msg: "Unable to post that public announcement." };
+  const url = announcementsApiUrl();
+  if (!url) return { ok: false, msg: cloudUnavailableMessage("posting public announcements") };
 
-  database.publicAnnouncements = Array.isArray(database.publicAnnouncements) ? database.publicAnnouncements : [];
-  database.publicAnnouncements.push(announcement);
-  saveDatabase(database);
+  const rollbackDatabase = loadDatabase();
 
-  const synced = await flushRemoteDatabasePush(database);
-  if (!synced) {
-    const rollbackDatabase = loadDatabase();
-    rollbackDatabase.publicAnnouncements = (Array.isArray(rollbackDatabase.publicAnnouncements) ? rollbackDatabase.publicAnnouncements : [])
-      .map(sanitizePublicAnnouncement)
-      .filter(Boolean)
-      .filter((item) => item.id !== announcement.id);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ content: cleanContent, adminUsername: getCurrentUsername() || ADMIN_ACCOUNT.username }),
+    });
+
+    if (!response.ok) throw new Error(await readSyncResponseError(response, "Could not post public announcement"));
+
+    const payload = await response.json().catch(() => null);
+    const announcement = sanitizePublicAnnouncement(payload?.announcement);
+    if (!announcement) throw new Error("Invalid announcement response from server");
+
+    const database = loadDatabase();
+    const announcements = Array.isArray(database.publicAnnouncements) ? database.publicAnnouncements : [];
+    database.publicAnnouncements = mergePublicAnnouncements(announcements, [announcement], database.deletedPublicAnnouncementIds);
+    saveDatabase(database, { skipRemote: true });
+    return { ok: true, msg: "Public announcement posted." };
+  } catch {
     saveDatabase(rollbackDatabase, { skipRemote: true });
     return { ok: false, msg: cloudUnavailableMessage("posting public announcements") };
   }
-
-  return { ok: true, msg: "Public announcement posted." };
 }
 
 function canCurrentUserSeePublicAnnouncements() {
@@ -2787,7 +2797,11 @@ function showPublicAnnouncementDialog() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const submitButton = form.querySelector('button[type="submit"]');
-    if (submitButton) submitButton.disabled = true;
+    const originalSubmitLabel = submitButton?.textContent || "Post Public Announcement";
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = "Posting…";
+    }
     setFeedback(feedback, true, "Posting public announcement to all participants…");
 
     try {
@@ -2797,11 +2811,15 @@ function showPublicAnnouncementDialog() {
         return;
       }
 
+      textarea.value = "";
       closeDialog(dialog);
       renderIndex();
       showNotification(res.msg, "ok");
     } finally {
-      if (submitButton) submitButton.disabled = false;
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = originalSubmitLabel;
+      }
     }
   });
 
