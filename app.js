@@ -53,6 +53,8 @@ let syncInFlight = false;
 let activeRemotePushPromise = null;
 let initialRemoteSyncPromise = null;
 let pendingRemotePushPromise = null;
+const adminHintReplyDrafts = new Map();
+const adminHintReplyExpanded = new Set();
 
 
 // -------------------------
@@ -2437,8 +2439,9 @@ function renderAdminPanel() {
       approveBox.className = "input hint-response-input";
       approveBox.rows = 3;
       approveBox.placeholder = "Write a personalized hint...";
-      approveBox.hidden = true;
+      approveBox.hidden = !adminHintReplyExpanded.has(request.id);
       approveBox.dataset.hintResponseFor = request.id;
+      approveBox.value = adminHintReplyDrafts.get(request.id) || "";
 
       const approve = document.createElement("button");
       approve.type = "button";
@@ -2448,7 +2451,7 @@ function renderAdminPanel() {
       const send = document.createElement("button");
       send.type = "button";
       send.textContent = "SEND";
-      send.hidden = true;
+      send.hidden = !adminHintReplyExpanded.has(request.id);
       send.dataset.sendHint = request.id;
       send.dataset.hintUser = request.username;
 
@@ -2857,6 +2860,14 @@ function bindAuthControls() {
   const adminHintList = document.getElementById("adminHintList");
   if (adminHintList && !adminHintList.dataset.bound) {
     adminHintList.dataset.bound = "true";
+    adminHintList.addEventListener("input", (e) => {
+      const responseBox = e.target.closest("[data-hint-response-for]");
+      if (!responseBox) return;
+      const requestId = responseBox.dataset.hintResponseFor;
+      if (!requestId) return;
+      adminHintReplyDrafts.set(requestId, responseBox.value);
+    });
+
     adminHintList.addEventListener("click", (e) => {
       if (!isCurrentUserAdmin()) return;
 
@@ -2868,6 +2879,7 @@ function bindAuthControls() {
         const requestId = approveButton.dataset.approveHint;
         const responseBox = adminHintList.querySelector(`[data-hint-response-for="${CSS.escape(requestId)}"]`);
         const sendButtonForRequest = adminHintList.querySelector(`[data-send-hint="${CSS.escape(requestId)}"]`);
+        adminHintReplyExpanded.add(requestId);
         if (responseBox) responseBox.hidden = false;
         if (sendButtonForRequest) sendButtonForRequest.hidden = false;
         approveButton.hidden = true;
@@ -2880,6 +2892,10 @@ function bindAuthControls() {
         const username = sendButton.dataset.hintUser;
         const responseBox = adminHintList.querySelector(`[data-hint-response-for="${CSS.escape(requestId)}"]`);
         const res = approveHintRequest(username, requestId, responseBox?.value ?? "");
+        if (res.ok) {
+          adminHintReplyDrafts.delete(requestId);
+          adminHintReplyExpanded.delete(requestId);
+        }
         renderIndex();
         showNotification(res.msg, res.ok ? "ok" : "info");
         return;
