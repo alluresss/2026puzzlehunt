@@ -75,8 +75,27 @@
       answerEl.classList.add("shake");
     }
 
+    function updateCooldownUi() {
+      const remainingMs = window.PuzzleHunt.getAnswerCooldownRemainingMs(puzzleId);
+      if (remainingMs <= 0) return false;
+      const countdown = window.PuzzleHunt.formatCooldownCountdown(remainingMs);
+      submitBtn.disabled = true;
+      answerEl.disabled = true;
+      setFeedback(false, `Incorrect answer cooldown active. You cannot submit yet. Try again in ${countdown}.`);
+      return true;
+    }
+
+    updateCooldownUi();
+    setInterval(() => {
+      if (!window.PuzzleHunt.getPuzzleState(puzzleId).solved && !updateCooldownUi()) {
+        answerEl.disabled = false;
+        submitBtn.disabled = false;
+      }
+    }, 1000);
+
     async function doSubmit() {
       if (window.PuzzleHunt.getPuzzleState(puzzleId).solved) return;
+      if (updateCooldownUi()) return;
 
       submitBtn.disabled = true;
 
@@ -85,7 +104,7 @@
 
       if (!res.ok) {
         shakeInput();
-        submitBtn.disabled = false;
+        if (!updateCooldownUi()) submitBtn.disabled = false;
         return;
       }
 
