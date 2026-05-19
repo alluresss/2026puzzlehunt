@@ -357,6 +357,7 @@ function mergeProgress(localProgress, remoteProgress) {
   const remote = sanitizeProgress(remoteProgress);
   const solvedSet = new Set([...local.solvedIds, ...remote.solvedIds]);
   const solvedAtById = {};
+  const incorrectGraceUntilById = {};
 
   for (const puzzleId of solvedSet) {
     const key = String(puzzleId);
@@ -366,10 +367,25 @@ function mergeProgress(localProgress, remoteProgress) {
       || new Date().toISOString();
   }
 
+  const gracePuzzleIds = new Set([
+    ...Object.keys(local.incorrectGraceUntilById || {}),
+    ...Object.keys(remote.incorrectGraceUntilById || {}),
+  ]);
+  for (const puzzleId of gracePuzzleIds) {
+    const key = String(Number(puzzleId));
+    const localGraceUntil = Number(local.incorrectGraceUntilById?.[key] || 0);
+    const remoteGraceUntil = Number(remote.incorrectGraceUntilById?.[key] || 0);
+    const graceUntil = Math.max(localGraceUntil, remoteGraceUntil);
+    if (Number.isFinite(Number(key)) && graceUntil > 0) {
+      incorrectGraceUntilById[key] = graceUntil;
+    }
+  }
+
   return {
     unlockedUpTo: Math.max(local.unlockedUpTo, remote.unlockedUpTo),
     solvedIds: Array.from(solvedSet),
     solvedAtById,
+    incorrectGraceUntilById,
   };
 }
 
