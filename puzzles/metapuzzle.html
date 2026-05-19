@@ -100,13 +100,19 @@
       if (updateCooldownUi()) return;
 
       submitBtn.disabled = true;
+      answerEl.disabled = true;
+      answerEl.readOnly = true;
 
       const res = await Promise.resolve(window.PuzzleHunt.submitAnswer(puzzleId, answerEl.value));
       setFeedback(res.ok, res.msg);
 
       if (!res.ok) {
         shakeInput();
-        if (!updateCooldownUi()) submitBtn.disabled = false;
+        if (!updateCooldownUi()) {
+          submitBtn.disabled = false;
+          answerEl.disabled = false;
+          answerEl.readOnly = false;
+        }
         return;
       }
 
