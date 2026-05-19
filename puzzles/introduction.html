@@ -78,7 +78,8 @@
       const countdown = window.PuzzleHunt.formatCooldownCountdown(remainingMs);
       submitBtn.disabled = true;
       answerEl.disabled = true;
-      setFeedback(false, `Incorrect answer cooldown active. You cannot submit yet. Try again in ${countdown}.`);
+      answerEl.readOnly = true;
+      setFeedback(false, `Incorrect answer cooldown active. You cannot enter or submit an answer for 2 minutes after an incorrect answer. Time remaining: ${countdown}.`);
       return true;
     }
 
@@ -86,6 +87,7 @@
     setInterval(() => {
       if (!window.PuzzleHunt.getPuzzleState(puzzleId).solved && !updateCooldownUi()) {
         answerEl.disabled = false;
+        answerEl.readOnly = false;
         submitBtn.disabled = false;
       }
     }, 1000);
