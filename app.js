@@ -38,6 +38,7 @@ const SOLVE_NOTIFICATION_KEY = "puzzle_hunt_solve_notification_v1";
 const META_REACHED_NOTIFICATION_KEY = "puzzle_hunt_meta_reached_notification_v1";
 const LOCAL_SEEN_PUBLIC_HINTS_KEY = "puzzle_hunt_local_seen_public_hints_v1";
 const LOCAL_SEEN_PUBLIC_ANNOUNCEMENTS_KEY = "puzzle_hunt_local_seen_public_announcements_v1";
+const LOCAL_SEEN_HINT_RESPONSES_KEY = "puzzle_hunt_local_seen_hint_responses_v1";
 const INCORRECT_ANSWER_GRACE_MS = 2 * 60 * 1000;
 // Use a real shared sync endpoint for multiplayer accounts/progress.
 // Configure DEFAULT_SYNC_ENDPOINT once here (or set window.PUZZLE_HUNT_SYNC_ENDPOINT
@@ -1329,17 +1330,25 @@ function getUnseenHintResponses() {
 
   const database = loadDatabase();
   const user = database.users[usernameKey(username)];
+  const key = usernameKey(username);
+  const locallySeen = getLocalSeenItems(LOCAL_SEEN_HINT_RESPONSES_KEY, key);
   return getUserHintRequests(user).filter((request) =>
-    !request.seenByUser && ["approved", "denied"].includes(request.status)
+    !request.seenByUser
+    && !locallySeen.has(itemIdKey(request.id))
+    && ["approved", "denied"].includes(request.status)
   );
 }
 
 function markHintResponsesSeen(requestIds) {
   const username = getCurrentUsername();
-  if (!username || !requestIds.length || !canUseCachedDatabaseForWrites()) return;
+  if (!username || !requestIds.length) return;
+
+  const key = usernameKey(username);
+  markLocalSeenItems(LOCAL_SEEN_HINT_RESPONSES_KEY, key, requestIds);
+  if (!canUseCachedDatabaseForWrites()) return;
 
   const database = loadDatabase();
-  const user = database.users[usernameKey(username)];
+  const user = database.users[key];
   if (!user) return;
 
   const idSet = new Set(requestIds);
@@ -1620,6 +1629,19 @@ function showPendingPublicHints() {
 
 function normalizeAnswer(s) {
   return (s ?? "").toString().trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+function getAnswerCooldownRemainingMs(puzzleId) {
+  const progress = loadProgress();
+  const graceUntil = Number(progress.incorrectGraceUntilById?.[String(puzzleId)] || 0);
+  return Math.max(0, graceUntil - Date.now());
+}
+
+function formatCooldownCountdown(remainingMs) {
+  const totalSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 function isSolved(puzzleId) {
@@ -3068,6 +3090,8 @@ window.PuzzleHunt = {
   requireUnlocked,
   submitAnswer,
   getPuzzleState,
+  getAnswerCooldownRemainingMs,
+  formatCooldownCountdown,
   navigateWithoutTransition,
   spawnCelebrationConfetti,
   bindHintRequestButton,
