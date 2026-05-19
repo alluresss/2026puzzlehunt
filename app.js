@@ -36,6 +36,8 @@ const HINT_EMAIL = "easond29@lakesideschool.org";
 const HINT_EMAIL_ENDPOINT = `https://formsubmit.co/ajax/${HINT_EMAIL}`;
 const SOLVE_NOTIFICATION_KEY = "puzzle_hunt_solve_notification_v1";
 const META_REACHED_NOTIFICATION_KEY = "puzzle_hunt_meta_reached_notification_v1";
+const LOCAL_SEEN_PUBLIC_HINTS_KEY = "puzzle_hunt_local_seen_public_hints_v1";
+const LOCAL_SEEN_PUBLIC_ANNOUNCEMENTS_KEY = "puzzle_hunt_local_seen_public_announcements_v1";
 // Use a real shared sync endpoint for multiplayer accounts/progress.
 // Configure DEFAULT_SYNC_ENDPOINT once here (or set window.PUZZLE_HUNT_SYNC_ENDPOINT
 // before app.js loads) so index.html and every puzzle page talk to the same database.
@@ -55,6 +57,34 @@ let initialRemoteSyncPromise = null;
 let pendingRemotePushPromise = null;
 const adminHintReplyDrafts = new Map();
 const adminHintReplyExpanded = new Set();
+
+function getLocalSeenItems(storageKey, username) {
+  if (!username) return new Set();
+
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storageKey) || "{}");
+    const ids = Array.isArray(parsed?.[username]) ? parsed[username] : [];
+    return new Set(ids.map(itemIdKey).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+function markLocalSeenItems(storageKey, username, itemIds) {
+  if (!username || !Array.isArray(itemIds) || !itemIds.length) return;
+
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storageKey) || "{}");
+    const existing = Array.isArray(parsed?.[username]) ? parsed[username] : [];
+    const merged = Array.from(new Set([
+      ...existing.map(itemIdKey).filter(Boolean),
+      ...itemIds.map(itemIdKey).filter(Boolean),
+    ]));
+    localStorage.setItem(storageKey, JSON.stringify({ ...parsed, [username]: merged }));
+  } catch {
+    // Ignore local cache write errors; server-side seen state still applies when sync succeeds.
+  }
+}
 
 
 // -------------------------
@@ -1403,7 +1433,8 @@ function getUnseenPublicAnnouncements() {
   if (!username || isAdminUsername(username) || !hasCompletedIntroduction(loadProgress())) return [];
 
   const key = usernameKey(username);
-  return getPublicAnnouncements().filter((announcement) => !announcement.seenBy.includes(key));
+  const locallySeen = getLocalSeenItems(LOCAL_SEEN_PUBLIC_ANNOUNCEMENTS_KEY, key);
+  return getPublicAnnouncements().filter((announcement) => !announcement.seenBy.includes(key) && !locallySeen.has(itemIdKey(announcement.id)));
 }
 
 function markPublicAnnouncementsSeen(announcementIds) {
@@ -1413,6 +1444,7 @@ function markPublicAnnouncementsSeen(announcementIds) {
   const database = loadDatabase();
   const idSet = new Set(announcementIds);
   const key = usernameKey(username);
+  markLocalSeenItems(LOCAL_SEEN_PUBLIC_ANNOUNCEMENTS_KEY, key, announcementIds);
   database.publicAnnouncements = (Array.isArray(database.publicAnnouncements) ? database.publicAnnouncements : [])
     .map(sanitizePublicAnnouncement)
     .filter(Boolean)
@@ -1533,12 +1565,13 @@ function getUnseenPublicHints() {
   if (!username || isAdminUsername(username)) return [];
 
   const key = usernameKey(username);
+  const locallySeen = getLocalSeenItems(LOCAL_SEEN_PUBLIC_HINTS_KEY, key);
   const progress = loadProgress();
   const introComplete = hasCompletedIntroduction(progress);
   return getPublicHints().filter((hint) => {
     const reachedPuzzle = hint.puzzleId === INTRODUCTION_PUZZLE.id
       || (introComplete && hint.puzzleId <= progress.unlockedUpTo);
-    return reachedPuzzle && !hint.seenBy.includes(key);
+    return reachedPuzzle && !hint.seenBy.includes(key) && !locallySeen.has(itemIdKey(hint.id));
   });
 }
 
@@ -1549,6 +1582,7 @@ function markPublicHintsSeen(hintIds) {
   const database = loadDatabase();
   const idSet = new Set(hintIds);
   const key = usernameKey(username);
+  markLocalSeenItems(LOCAL_SEEN_PUBLIC_HINTS_KEY, key, hintIds);
   database.publicHints = (Array.isArray(database.publicHints) ? database.publicHints : [])
     .map(sanitizePublicHint)
     .filter(Boolean)
@@ -2447,6 +2481,7 @@ function renderAdminPanel() {
       approve.type = "button";
       approve.textContent = "APPROVE";
       approve.dataset.approveHint = request.id;
+      approve.hidden = adminHintReplyExpanded.has(request.id);
 
       const send = document.createElement("button");
       send.type = "button";
@@ -2505,6 +2540,19 @@ function renderIndex() {
 
   renderLeaderboard();
   renderAdminPanel();
+
+  if (isAdmin) {
+    const activeRequestId = Array.from(adminHintReplyExpanded)[0];
+    if (activeRequestId) {
+      setTimeout(() => {
+        const responseBox = document.querySelector(`#adminHintList [data-hint-response-for="${CSS.escape(activeRequestId)}"]`);
+        if (!responseBox || responseBox.hidden) return;
+        const length = responseBox.value.length;
+        responseBox.focus();
+        responseBox.setSelectionRange(length, length);
+      }, 0);
+    }
+  }
 
   if (authPanel) authPanel.hidden = Boolean(username);
   if (huntPanel) huntPanel.hidden = !username || isAdmin;
