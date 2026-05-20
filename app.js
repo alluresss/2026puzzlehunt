@@ -307,6 +307,10 @@ function announcementsApiUrl() {
   return SYNC_ENDPOINT ? `${SYNC_ENDPOINT}/announcements` : "";
 }
 
+function publicHintsApiUrl() {
+  return SYNC_ENDPOINT ? `${SYNC_ENDPOINT}/public-hints` : "";
+}
+
 function cloudDatabaseStatus() {
   if (!remoteDatabaseUrl()) {
     return {
@@ -1591,7 +1595,7 @@ function revokePublicHint(hintId) {
   return { ok: true, msg: "Public hint/clarification revoked." };
 }
 
-function postPublicHint(puzzleId, content) {
+async function postPublicHint(puzzleId, content) {
   if (!canUseCachedDatabaseForWrites()) return { ok: false, msg: cloudUnavailableMessage("posting public hints") };
   if (!isCurrentUserAdmin()) return { ok: false, msg: "Only admins can post public hints." };
 
@@ -1600,20 +1604,36 @@ function postPublicHint(puzzleId, content) {
   if (!puzzle) return { ok: false, msg: "Choose a puzzle before posting." };
   if (!cleanContent) return { ok: false, msg: "Write hint or clarification content before posting." };
 
-  const database = loadDatabase();
-  const hint = sanitizePublicHint({
-    puzzleId: puzzle.id,
-    puzzleTitle: puzzle.title,
-    content: cleanContent,
-    createdAt: new Date().toISOString(),
-    seenBy: [ADMIN_ACCOUNT.username],
-  });
-  if (!hint) return { ok: false, msg: "Unable to post that public hint." };
+  const url = publicHintsApiUrl();
+  if (!url) return { ok: false, msg: cloudUnavailableMessage("posting public hints") };
 
-  database.publicHints = Array.isArray(database.publicHints) ? database.publicHints : [];
-  database.publicHints.push(hint);
-  saveDatabase(database);
-  return { ok: true, msg: `Public hint/clarification posted for Puzzle ${puzzle.id}.` };
+  const rollbackDatabase = loadDatabase();
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ puzzleId: puzzle.id, puzzleTitle: puzzle.title, content: cleanContent, adminUsername: getCurrentUsername() || ADMIN_ACCOUNT.username }),
+    });
+
+    if (!response.ok) throw new Error(await readSyncResponseError(response, "Could not post public hint"));
+
+    const payload = await response.json().catch(() => null);
+    const hint = sanitizePublicHint(payload?.hint);
+    if (!hint) throw new Error("Invalid public hint response from server");
+
+    const database = loadDatabase();
+    const hints = Array.isArray(database.publicHints) ? database.publicHints : [];
+    database.publicHints = mergePublicHints(hints, [hint], database.deletedPublicHintIds);
+    saveDatabase(database, { skipRemote: true });
+    return { ok: true, msg: `Public hint/clarification posted for Puzzle ${puzzle.id}.` };
+  } catch {
+    saveDatabase(rollbackDatabase, { skipRemote: true });
+    return { ok: false, msg: cloudUnavailableMessage("posting public hints") };
+  }
 }
 
 function getUnseenPublicHints() {
